@@ -52,8 +52,38 @@ _is_torch_generator_available = False
 if version.parse(torch.__version__) >= version.parse("1.6"):
     _is_torch_generator_available = True
 
-with open(TOKEN_DICTIONARY_FILE, "rb") as f:
-    token_dictionary = pickle.load(f)
+_token_dictionary = None
+
+def _get_token_dictionary():
+    global _token_dictionary
+    if _token_dictionary is None:
+        with open(TOKEN_DICTIONARY_FILE, "rb") as f:
+            _token_dictionary = pickle.load(f)
+    return _token_dictionary
+
+# Lazy property so existing code using `token_dictionary` still works
+class _TokenDictProxy:
+    """Proxy that lazily loads the token dictionary on first attribute access."""
+    def __getattr__(self, name):
+        return getattr(_get_token_dictionary(), name)
+    def __getitem__(self, key):
+        return _get_token_dictionary()[key]
+    def __contains__(self, key):
+        return key in _get_token_dictionary()
+    def __iter__(self):
+        return iter(_get_token_dictionary())
+    def __len__(self):
+        return len(_get_token_dictionary())
+    def get(self, *args, **kwargs):
+        return _get_token_dictionary().get(*args, **kwargs)
+    def keys(self):
+        return _get_token_dictionary().keys()
+    def values(self):
+        return _get_token_dictionary().values()
+    def items(self):
+        return _get_token_dictionary().items()
+
+token_dictionary = _TokenDictProxy()
 
 
 class ExplicitEnum(Enum):

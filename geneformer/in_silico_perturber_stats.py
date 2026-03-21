@@ -33,9 +33,10 @@ from .in_silico_perturber import flatten_list
 
 from .tokenizer import TOKEN_DICTIONARY_FILE
 import sys
+from pathlib import Path
 
-
-GENE_NAME_ID_DICTIONARY_FILE = "/path/to/save/MLM-re_token_dictionary_v1_GeneSymbol_to_EnsemblID.pkl"
+_DICTS_DIR = Path(__file__).parent / "dicts"
+GENE_NAME_ID_DICTIONARY_FILE = _DICTS_DIR / "MLM-re_token_dictionary_v1_GeneSymbol_to_EnsemblID.pkl"
 
 
 logger = logging.getLogger(__name__)
