@@ -1,53 +1,61 @@
-# Mouse-Geneformer
 
-Writer: Keita Ito
+# Premise
+DGX spark (ARM64) 
+Docker env and use uv to install packages.
 
-## Abstract 
-This repository contains the source code of mouse-Geneformer for analysing Single-cell RNA-sequence data of mouse. mosue-Geneformer is a model pre-trained on the large mouse single-cell dataset mouse-Genecorpus-20M and designed to map the mouse gene network. The mosue-Geneformer improves the accuracy of cell type classification of mouse cells and enables in silico perturbation experiments on mouse specimens.
+To adapt DGX spark GPU, many changes in requirements.txt.
 
-<!-- PLOS Genetics の URL を載せる-->
-<!-- [[PLOS Genetics](hhttps://journals.plos.org/plosgenetics/...)]-->
+# Install
+clone rep
+docker build
 
-<!--bioRxiv の URL を載せる -->
-[[bioRxiv](https://www.biorxiv.org/content/10.1101/2024.09.09.611960v1)]
+# Run juperter lab
+docker compose up
 
-## Citation
-If you find this repository is useful. Please cite the following references.
+MLM-re_token_dictionary_v1.pkl was missed from the repo. Download it from https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl
 
-<!-- PLOS Genetics の bibtex を載せる -->
+cd /home/yuya-sanaki/20260321Mouse-Geneformer/data/Mouse-Genecorpus-20M
+git lfs pull
 
-<!--bioRxiv の bibtex を載せる -->
-```bibtex 
-@article{Ito2024.09.09.611960,
-   author = {Ito, Keita and Hirakawa, Tsubasa and Shigenobu, Shuji and Fujiyoshi, Hironobu and Yamashita, Takayoshi},
-   title = {Mouse-Geneformer: A Deep Leaning Model for Mouse Single-Cell Transcriptome and Its Cross-Species Utility},
-   journal = {bioRxiv},
-   year = {2024},
-   URL = {https://www.biorxiv.org/content/early/2024/09/13/2024.09.09.611960}
-}
-```
-## Enviroment
-Our source code is based on mplemented with PyTorch. 
-Required PyTorch and Python version is as follows:
-- PyTorch : 2.0.1
-- Python vision : 3.8.10
+changed 
+# load disease dataset (xxx.dataset)
+dataset_name = "/app/data/Mouse-Genecorpus-20M/eval_dataset/in_silico_perturbation/Cop1KO_isp_mouse_tokenize_dataset_v-n1.dataset"
 
-## Execute
-Example of Pretraining run command is as follows:
+#18
+changed
 
-#### Pretraining
-```bash
-# mosue-Genecorpus-20M dataset
-./start_pretrain_geneformer.sh
-```
-Downstream task is executed in jupyter files (`cell_classification.ipynb` and `in_silico_perturbation.ipynb`)
 
-## Trained model
-We have published the model files of mouse-Geneformer.
+# "delete": delete gene from rank value encoding
+# "overexpress": move gene to front of rank value encoding
+# "inhibit": move gene to lower quartile of rank value encoding
+# "activate": move gene to higher quartile of rank value encoding
 
- `mouse-Geneformer` is base model. `mouse-Geneformer-12L-E20` is large model.
 
-<!-- mouse-Geneformer の事前学習済みモデルの google drive の URL を載せる-->
-- [mouse-Geneformer](https://drive.google.com/file/d/1gM3gcc3DlNGt5bAcqHbeRxtdMktGeDEg/view?usp=sharing)
-<!-- mouse-Geneformer-L12-E20 の事前学習済みモデルの google drive の URL を載せる-->
-- [mouse-Geneformer-12L-E20](https://drive.google.com/file/d/1xKMyFA4JJeRigcJPsU2XNyxEW25Q247u/view?usp=sharing)
+select_perturb_type = "delete"
+
+start_state = "Cop1_WT"          # <-- change this
+end_state = "Cop1_KO"            # <-- change this
+alt_state = []
+
+use_model_type = "Pretrained"    # <-- change this (you have the pretrained model, not a fine-tuned CellClassifier)
+
+genes_to_perturb_list = []
+
+isp = InSilicoPerturber(perturb_type=select_perturb_type,
+                        perturb_rank_shift=None,
+                        genes_to_perturb="all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list,
+                        combos=0,
+                        anchor_gene=None,
+                        model_type=use_model_type,
+                        num_classes=2,               # <-- 2 classes: Cop1_WT and Cop1_KO
+                        emb_mode="cell",
+                        cell_emb_style="mean_pool",
+                        filter_data=None,
+                        cell_states_to_model={'state_key': 'disease', 
+                                              'start_state': start_state, 
+                                              'goal_state': end_state, 
+                                              'alt_states': alt_state}, 
+                        max_ncells=2000,
+                        emb_layer=0,
+                        forward_batch_size=50,
+                        nproc=6)
