@@ -52,7 +52,8 @@ from .in_silico_perturber import downsample_and_sort, \
                                  load_model, \
                                  mean_nonpadding_embs, \
                                  pad_tensor_list, \
-                                 quant_layers
+                                 quant_layers, \
+                                 _force_tensor
 
 from .in_silico_perturber import ISP_device
 
@@ -78,7 +79,7 @@ def get_embs(model,
         # test embedding extraction for example cell and extract # emb dims
         example = filtered_input_data.select([i for i in range(1)])
         example.set_format(type="torch")
-        emb_dims = test_emb(model, example["input_ids"], layer_to_quant)
+        emb_dims = test_emb(model, _force_tensor(example["input_ids"]), layer_to_quant)
         # initiate tdigests for # of emb dims
         embs_tdigests = [TDigest() for _ in range(emb_dims)]
 
@@ -91,7 +92,7 @@ def get_embs(model,
         original_lens = torch.tensor(minibatch["length"]).to(EMB_device)
         minibatch.set_format(type="torch")
 
-        input_data_minibatch = minibatch["input_ids"]
+        input_data_minibatch = _force_tensor(minibatch["input_ids"])
         input_data_minibatch = pad_tensor_list(input_data_minibatch, 
                                                max_len, 
                                                pad_token_id, 
