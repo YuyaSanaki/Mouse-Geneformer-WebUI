@@ -120,9 +120,24 @@ def get_possible_states(cell_states_to_model):
     possible_states += cell_states_to_model.get("alt_states",[])
     return possible_states
 
+def _force_tensor(data):
+    if getattr(data, "squeeze", None) is not None:
+        return data
+    if hasattr(data, "to_pylist"):
+        data = data.to_pylist()
+    if isinstance(data, list):
+        if len(data) > 0 and not isinstance(data[0], torch.Tensor):
+            data = [torch.tensor(x) for x in data]
+        if len(data) > 0 and isinstance(data[0], torch.Tensor):
+            try:
+                data = torch.stack(data)
+            except Exception:
+                pass
+    return data
+
 def forward_pass_single_cell(model, example_cell, layer_to_quant):
     example_cell.set_format(type="torch")
-    input_data = example_cell["input_ids"]
+    input_data = _force_tensor(example_cell["input_ids"])
     with torch.no_grad():
         outputs = model(
             #input_ids = input_data.to("cuda")
@@ -370,7 +385,7 @@ def get_cell_state_avg_embs(model,
             state_minibatch = filtered_input_data_state.select([i for i in range(i, max_range)])
             state_minibatch.set_format(type="torch")
             
-            input_data_minibatch = state_minibatch["input_ids"]
+            input_data_minibatch = _force_tensor(state_minibatch["input_ids"])
             original_lens += state_minibatch["length"]
             input_data_minibatch = pad_tensor_list(input_data_minibatch, 
                                                    max_len, 
@@ -470,7 +485,7 @@ def quant_cos_sims(model,
 
         minibatch.set_format(type="torch")
         
-        input_data_minibatch = minibatch["input_ids"]
+        input_data_minibatch = _force_tensor(minibatch["input_ids"])
         attention_mask = gen_attention_mask(minibatch, max_len)
         
         # extract embeddings for perturbation minibatch
