@@ -42,9 +42,10 @@ logger = logging.getLogger(__name__)
 # setting 
 USE_GPU = "cuda:0"
 
-# need file path
-GENE_MEDIAN_FILE = "/path/to/mediam/dictionary/gene_median_dictionary.pkl"
-TOKEN_DICTIONARY_FILE = "/path/to/token/dictionary/MLM-re_token_dictionary_v1.pkl"
+# Dictionary files are expected in a 'dicts' subdirectory next to this file.
+_DICTS_DIR = Path(__file__).parent / "dicts"
+GENE_MEDIAN_FILE = _DICTS_DIR / "mouse_gene_median_dictionary.pkl"
+TOKEN_DICTIONARY_FILE = _DICTS_DIR / "MLM-re_token_dictionary_v1.pkl"
 
 
 def rank_genes(gene_vector, gene_tokens):

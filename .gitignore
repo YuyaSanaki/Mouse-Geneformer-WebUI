@@ -1,0 +1,13 @@
+# Data and model outputs
+/data/
+/models/
+/output/
+
+# Python and Jupyter ignore
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# Large dictionary files
+/geneformer/dicts/
