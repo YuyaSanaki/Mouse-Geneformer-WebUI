@@ -7,8 +7,8 @@ paths:
   # Tokenized HuggingFace dataset directory (.dataset)
   dataset: /app/data/Mouse-Genecorpus-20M/eval_dataset/in_silico_perturbation/Cop1KO_isp_mouse_tokenize_dataset_v-n1.dataset
   geneformer_model: /app/models/mouse-Geneformer/
+  # Per run: {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date = today, or --output-date / ISP_OUTPUT_DATE)
   output_root: /app/output
-      # Per run: {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date = today, or --output-date / ISP_OUTPUT_DATE)
 
 perturbation:
   type: delete # delete | overexpress | inhibit | activate
@@ -45,6 +45,6 @@ analysis:
 
 runtime:
   # GPU minibatch for transformer forwards; raise until just below OOM.
-  forward_batch_size: 90
-  # CPU workers for HuggingFace datasets map/filter (not GPU count).
+  forward_batch_size: 200
+  # CPU workers for HuggingFace datasets map/filter (not GPU count). High nproc uses more RAM.
   nproc: 8

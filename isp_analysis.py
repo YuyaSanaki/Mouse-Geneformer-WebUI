@@ -7,6 +7,7 @@ Uses pandas + matplotlib; optional cuDF is not required for this script.
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import sys
 from pathlib import Path
@@ -188,6 +189,7 @@ def run_isp_figure_analysis(
 
     print(f"[isp_analysis] Figures saved under: {figures_dir}")
     print(f"[isp_analysis] Tables saved under:   {stats_dir}")
+œ    gc.collect()
 
 
 def main() -> None:
