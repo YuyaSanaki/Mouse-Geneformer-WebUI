@@ -94,7 +94,7 @@ def quant_layers(model):
     return int(max(layer_nums))+1
 
 def get_model_input_size(model):
-    return int(re.split("\(|,",str(model.bert.embeddings.position_embeddings))[1])
+    return int(re.split(r"\(|,",str(model.bert.embeddings.position_embeddings))[1])
 
 def flatten_list(megalist):
     return [item for sublist in megalist for item in sublist]
@@ -121,10 +121,17 @@ def get_possible_states(cell_states_to_model):
     return possible_states
 
 def _force_tensor(data):
-    if getattr(data, "squeeze", None) is not None:
+    if isinstance(data, torch.Tensor):
+        return data
+    if getattr(data, "squeeze", None) is not None and callable(getattr(data, "squeeze")) and hasattr(data, "to"):
         return data
     if hasattr(data, "to_pylist"):
         data = data.to_pylist()
+    elif type(data).__name__ == 'Column':
+        data = list(data)
+    elif hasattr(data, "tolist"):
+        data = data.tolist()
+        
     if isinstance(data, list):
         if len(data) > 0 and not isinstance(data[0], torch.Tensor):
             data = [torch.tensor(x) for x in data]
@@ -133,6 +140,11 @@ def _force_tensor(data):
                 data = torch.stack(data)
             except Exception:
                 pass
+    elif not isinstance(data, torch.Tensor):
+        try:
+            data = torch.tensor(data)
+        except Exception:
+            pass
     return data
 
 def forward_pass_single_cell(model, example_cell, layer_to_quant):
@@ -302,7 +314,7 @@ def make_perturbation_batch(example_cell,
             all_indices = [index for index in all_indices if index not in indices_to_perturb]
             indices_to_perturb = [[[j for i in indices_to_perturb for j in i], x] for x in all_indices]
     length = len(indices_to_perturb) # 
-    perturbation_dataset = Dataset.from_dict({"input_ids": example_cell["input_ids"]*length, 
+    perturbation_dataset = Dataset.from_dict({"input_ids": list(example_cell["input_ids"])*length, 
                                               "perturb_index": indices_to_perturb})
     if length<400:
         num_proc_i = 1
@@ -1377,7 +1389,7 @@ class InSilicoPerturber:
             for i in trange(len(filtered_input_data)):
                 example_cell = filtered_input_data.select([i])
                 original_emb = forward_pass_single_cell(model, example_cell, layer_to_quant)
-                gene_list = torch.squeeze(example_cell["input_ids"])
+                gene_list = torch.squeeze(_force_tensor(example_cell["input_ids"]))
                 
                 # reset to original type to prevent downstream issues due to forward_pass_single_cell modifying as torch format in place
                 example_cell = filtered_input_data.select([i])
