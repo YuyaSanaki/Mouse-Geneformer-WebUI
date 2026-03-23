@@ -1507,9 +1507,10 @@ class InSilicoPerturber:
                     smoothing=0.05,
                     mininterval=0.5,
                     file=sys.stderr,
+                    dynamic_ncols=True,
                     bar_format=(
                         "{desc} | {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
-                        "[elapsed {elapsed} · ETA {remaining} · {rate_fmt}]"
+                        "[{rate_inv_fmt} · {elapsed} · ETA {remaining}]"
                     ),
                 ):
                     example_cell = filtered_input_data.select([i])
