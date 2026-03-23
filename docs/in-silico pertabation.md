@@ -1,0 +1,132 @@
+# In-silico perturbation (ISP) — new biology
+
+This guide describes the **end-to-end workflow** to run Geneformer ISP on a **new experiment** (e.g. different tissue, genotype, or condition). Batch entrypoint: [`run_isp.py`](../run_isp.py). Configuration: [`config/isp.yaml`](../config/isp.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
+
+---
+
+## 1. Define the question
+
+- **Goal-state shift** (same idea as Cop1 WT → KO in the tutorial) needs **at least two distinct labels** for cells, stored in **one metadata column** (e.g. control vs knockdown).
+- Decide **which cells** belong in the analysis (e.g. skeletal muscle only). You can enforce that **before tokenization** (subset cells) or **after**, using `isp.filter_data` in `isp.yaml` if those columns exist in the tokenized dataset.
+
+---
+
+## 2. Obtain expression data
+
+You need **raw counts** (single-cell or pseudo-bulk) plus **per-cell metadata**. ISP never reads this raw layer directly; you first run **`TranscriptomeTokenizer`** in [`geneformer/tokenizer.py`](../geneformer/tokenizer.py), which accepts **only** the formats below.
+
+### Acceptable file formats (for `tokenize_data`)
+
+| Format | Notes |
+|--------|--------|
+| **`.loom`** | Primary format described in the tokenizer. Put one or more `*.loom` files in a directory and call `tokenize_data(..., file_format="loom")` (default). |
+| **`.h5ad` (AnnData)** | Supported via `tokenize_data(..., file_format="h5ad")`. Same biology requirements as loom; fields below must be present in the object. |
+
+Other tabular formats (**CSV, MTX-only, RDS, …**) are **not** read by `TranscriptomeTokenizer` as-is. Convert to **`.loom` or `.h5ad`** first (e.g. `scanpy` / `loompy` / R exporters), with the required columns/attributes.
+
+### Required fields (mouse tokenizer)
+
+**Genes**
+
+- **`ensembl_id`**: Ensembl gene ID per gene (loom: row attribute `ensembl_id`; AnnData: `adata.var["ensembl_id"]`). Values must match the **mouse** token / median dictionaries used by the tokenizer.
+
+**Cells**
+
+- **`n_counts`**: total UMI/read counts per cell (loom: column attribute `n_counts`; AnnData: `adata.obs["n_counts"]`). Used for normalization before ranking.
+
+**Optional**
+
+- **`filter_pass`**: binary flag per cell; if missing, **all** cells are tokenized (see tokenizer messages).
+
+**Metadata for ISP / YAML**
+
+- Any columns you want in the final **`.dataset`** (and in `isp.yaml`) must be passed through the tokenizer via **`custom_attr_name_dict`**: maps **names in the loom/h5ad** → **column names in the output dataset** (e.g. map your condition column to `disease` if that is your `perturbation.state_key`).
+- Those values must match **`start_state` / `end_state` / `alt_states`** exactly.
+
+### Expression assumptions
+
+- Use **raw counts**, **without** prior feature selection (per tokenizer docstring).
+- Genes are median-scaled and rank-tokenized inside the tokenizer; you do **not** hand ISP a CSV of ranks.
+
+---
+
+## 3. Build a tokenized `.dataset` (required)
+
+ISP does **not** read **loom / h5ad / CSV** directly. After tokenization, it expects a **Hugging Face [`datasets`](https://huggingface.co/docs/datasets)** object **saved on disk** as a **`.dataset` directory** with at least:
+
+| Column / field | Role |
+|----------------|------|
+| `input_ids` | Rank-encoded gene tokens per cell |
+| `length` | Sequence length (often added in a `map` step) |
+| Your state column | Named in YAML as `perturbation.state_key`; values must match `start_state` / `end_state` / `alt_states` **exactly** |
+
+**Steps:**
+
+1. Load the **mouse** token dictionary (e.g. `MLM-re_token_dictionary_v1.pkl`; see [README](../README.md)).
+2. Tokenize with Geneformer’s pipeline (e.g. `TranscriptomeTokenizer` in [`geneformer/tokenizer.py`](../geneformer/tokenizer.py)): expression → ranked `input_ids`.
+3. Attach metadata columns (state labels, optional `cell_type`, `organ_major`, etc.).
+4. Call **`save_to_disk(...)`** to a folder such as `/app/data/.../my_experiment_isp.dataset`.
+
+---
+
+## 4. Configure `config/isp.yaml`
+
+Align the file with your **dataset column names** and **string labels**.
+
+| YAML area | What to set |
+|-----------|-------------|
+| `paths.dataset` | Path to your **`.dataset`** directory |
+| `paths.geneformer_model` | Mouse Geneformer checkpoint directory |
+| `paths.output_root` | Parent directory; each run writes to **`{output_root}/{YYYYMMDD}/isp_results`** and **`.../ispstats_results`** (date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`). Legacy: you can still set `isp_results_dir` and `ispstats_results_dir` instead of `output_root` for fixed paths. |
+| `perturbation.state_key` | **Exact** name of the metadata column for states |
+| `perturbation.start_state` / `end_state` | **Exact** strings as they appear in that column |
+| `perturbation.alt_states` | List of alternate end-state labels, or `[]` |
+| `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` — keys must exist in the dataset |
+| `isp.max_ncells` | Cap on cells (after filters) |
+| `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers for `datasets` |
+
+`model.type: Pretrained` is the usual choice for the stock mouse model; other options require matching **fine-tuned** checkpoints (see Geneformer docs).
+
+---
+
+## 5. Run in Docker
+
+
+**Run ISP:**
+```bash
+docker compose run --rm isp
+```
+  This invokes `accelerate launch … /app/run_isp.py --config /app/config/isp.yaml`.
+
+Alternative with Jupyter container already up: `docker exec -it mouse_geneformer_container accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`
+
+---
+
+## 6. Outputs and downstream analysis
+
+- **Intermediate / perturbation outputs:** `{paths.output_root}/{YYYYMMDD}/isp_results` (unless using legacy path keys).
+- **Stats (e.g. parquet):** `{paths.output_root}/{YYYYMMDD}/ispstats_results`.
+- **Figures + table exports:** after stats, `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) (same logic as [`isp_analysis.ipynb`](../isp_analysis.ipynb)): PNGs under **`{paths.output_root}/{YYYYMMDD}/figures/`** (e.g. `shift_distribution.png`, `volcano_plot.png`, `top_genes_barplot.png`, `waterfall_plot.png`); CSV summaries stay next to the parquet in `ispstats_results`. Disable with `analysis.enabled: false` in `isp.yaml` or `--skip-analysis`.
+
+---
+
+## Do I need a new `.dataset`?
+
+| Situation | Action |
+|-----------|--------|
+| New tissue, genotype, or comparison | **Yes** — build or obtain a **tokenized** `.dataset` with correct `input_ids` and state metadata, then point `paths.dataset` at it. |
+| Same dataset; only batch size / cell cap changes | Adjust `runtime.*` and/or `isp.max_ncells` only. |
+| Same experiment; paths on disk changed | Update `paths.*` in `isp.yaml` only. |
+
+---
+
+## Hard requirements
+
+1. **Same vocabulary** as training: mouse **pretrained** Geneformer + token dictionary used to build `input_ids`.
+2. **Exact string match** between dataset labels and `start_state` / `end_state` / `alt_states` in YAML (including spaces and casing).
+
+---
+
+## Flow summary
+
+**Design → raw counts + metadata → tokenize → save `.dataset` → edit `isp.yaml` → `docker compose run --rm isp` → outputs → analysis.**

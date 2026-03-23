@@ -1,0 +1,50 @@
+# =============================================================================
+# In-silico perturbation — run_isp.py
+# Default path in Docker: /app/config/isp.yaml  (override: --config or ISP_CONFIG)
+# =============================================================================
+
+paths:
+  # Tokenized HuggingFace dataset directory (.dataset)
+  dataset: /app/data/Mouse-Genecorpus-20M/eval_dataset/in_silico_perturbation/Cop1KO_isp_mouse_tokenize_dataset_v-n1.dataset
+  geneformer_model: /app/models/mouse-Geneformer/
+  output_root: /app/output
+      # Per run: {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date = today, or --output-date / ISP_OUTPUT_DATE)
+
+perturbation:
+  type: delete # delete | overexpress | inhibit | activate
+  organ_data: Cop1KO
+  # Dataset column for cell state labels (start / goal / alt values below refer to this column).
+  state_key: disease
+  start_state: Cop1_WT
+  end_state: Cop1_KO
+  alt_states: []
+  # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
+  genes_to_perturb: []
+
+model:
+  type: Pretrained # Pretrained | GeneClassifier | CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 2000
+  emb_layer: 0 # 0 = last layer; -1 = second-to-last (see Geneformer docs)
+  emb_mode: cell # cell | cell_and_gene
+  cell_emb_style: mean_pool
+  combos: 0
+  anchor_gene: null
+  perturb_rank_shift: null
+  perturb_rank_direct_shift: null
+  filter_data: null # e.g. { "cell_type": ["cardiomyocyte"] }
+
+stats:
+  mode: goal_state_shift # goal_state_shift | vs_null | mixture_model | aggregate_data
+
+# Post-stats plots + CSV tables (isp_analysis.py). Figures: {output_root}/{date}/figures/
+analysis:
+  enabled: true
+
+runtime:
+  # GPU minibatch for transformer forwards; raise until just below OOM.
+  forward_batch_size: 90
+  # CPU workers for HuggingFace datasets map/filter (not GPU count).
+  nproc: 8
