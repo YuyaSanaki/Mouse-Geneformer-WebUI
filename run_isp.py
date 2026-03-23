@@ -14,7 +14,6 @@ Speed on DGX / large GPUs:
 from __future__ import annotations
 
 import argparse
-import gc
 import os
 import sys
 from datetime import datetime
@@ -37,16 +36,6 @@ def _deep_get(m: Mapping[str, Any] | None, *keys: str, default: Any = None) -> A
 
 def _ensure_dir_suffix(path: str) -> str:
     return path if path.endswith(os.sep) else path + os.sep
-
-
-def _free_memory(phase: str) -> None:
-    """Best-effort CPU + GPU cache release between heavy stages (does not shrink peak RSS much during a single hot loop)."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-    if os.environ.get("ISP_VERBOSE_MEMORY", "").lower() in ("1", "true", "yes"):
-        print(f"[memory] gc + cuda.empty_cache after {phase}")
 
 
 def load_isp_config(path: Path) -> dict[str, Any]:
@@ -211,7 +200,6 @@ def main() -> None:
 
     print("Starting perturbation...")
     isp.perturb_data(model_dir, dataset_name, isp_dir, output_prefix)
-    _free_memory("perturb_data")
 
     print("Perturbation complete. Generating stats...")
     ispstats = InSilicoPerturberStats(
@@ -232,7 +220,6 @@ def main() -> None:
 
     ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
     print("Stats generation complete. Check the parquet file.")
-    _free_memory("get_stats")
 
     analysis_cfg = cfg.get("analysis") or {}
     run_figures = analysis_cfg.get("enabled", True) and not args.skip_analysis
@@ -252,7 +239,6 @@ def main() -> None:
             label_end=end_state,
         )
         print(f"Figures directory: {figures_dir}")
-        _free_memory("isp_analysis")
 
 
 if __name__ == "__main__":

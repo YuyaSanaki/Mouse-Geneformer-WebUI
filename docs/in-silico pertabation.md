@@ -127,6 +127,14 @@ Alternative with Jupyter container already up: `docker exec -it mouse_geneformer
 
 ---
 
+## Memory and throughput
+
+- Prefer **letting PyTorch manage GPU memory** between batches. Avoid calling `torch.cuda.empty_cache()`, `torch.cuda.synchronize()`, or aggressive `gc.collect()` in hot loops or after every pipeline stage: that can serialize CPU/GPU work and hurt the caching allocator, lowering GPU utilization.
+- If a forward pass hits **CUDA OOM**, the ISP code may **empty the cache once and retry** that forward; if it still fails, reduce `runtime.forward_batch_size` or `isp.max_ncells` and rerun.
+- **CPU `nproc`**: tune for your host (see `config/isp.yaml`); it only speeds dataset map/filter steps, not the transformer forwards.
+
+---
+
 ## Flow summary
 
 **Design → raw counts + metadata → tokenize → save `.dataset` → edit `isp.yaml` → `docker compose run --rm isp` → outputs → analysis.**
