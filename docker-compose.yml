@@ -1,27 +1,46 @@
-version: '3.8'
+# Compose v2+ (no top-level `version` key required)
+#
+# Run as host UID/GID so files under the bind-mounted project (e.g. output/) are
+# owned by your user, not root. Override if needed: DOCKER_UID=$(id -u) DOCKER_GID=$(id -g)
+# docker compose run --rm isp   or set DOCKER_UID/DOCKER_GID in a .env file.
+
+x-geneformer-base: &geneformer-base
+  image: mouse-geneformer:latest
+  user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+  volumes:
+    - .:/app
+    - /var/run/docker.sock:/var/run/docker.sock
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  environment:
+    - LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1:/usr/local/lib/python3.12/dist-packages/scikit_learn.libs/libgomp-d22c30c5.so.1.0.0
+  ipc: host
+  working_dir: /app
 
 services:
-  geneformer:
+  mouse-geneformer:
+    <<: *geneformer-base
     build: .
-    image: mouse-geneformer:latest
     container_name: mouse_geneformer_container
-    volumes:
-      - .:/app
-      - /var/run/docker.sock:/var/run/docker.sock #for nemoclaw automation
-    # If using GPU, uncomment the deploy section below:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     ports:
       - "8888:8888"
-    environment:
-      - LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1:/usr/local/lib/python3.12/dist-packages/scikit_learn.libs/libgomp-d22c30c5.so.1.0.0
-    ipc: host
-    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
-    # Uncomment if you want the container to stay alive in the background
-    # tty: true
-    # stdin_open: true
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token='' --NotebookApp.password=''
+
+  # One-shot ISP run: docker compose run --rm isp
+  # (uses the same image as mouse-geneformer; build that image first: docker compose build mouse-geneformer)
+  isp:
+    <<: *geneformer-base
+    container_name: mouse_geneformer_isp
+    command:
+      - accelerate
+      - launch
+      - --num_processes
+      - "1"
+      - /app/run_isp.py
+      - --config
+      - /app/config/isp.yaml

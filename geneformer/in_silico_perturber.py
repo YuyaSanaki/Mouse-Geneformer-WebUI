@@ -36,6 +36,39 @@ import seaborn as sns; sns.set()
 import torch
 from collections import defaultdict
 from datasets import Dataset, load_from_disk
+
+try:
+    from datasets.utils import disable_progress_bars
+    from datasets.utils import enable_progress_bars
+    from datasets.utils import tqdm as _hf_datasets_tqdm_cls
+except ImportError:
+    import datasets.utils.tqdm as _hf_tqdm_mod
+
+    _hf_datasets_tqdm_cls = getattr(_hf_tqdm_mod, "tqdm", _hf_tqdm_mod)
+
+    def disable_progress_bars():
+        pass
+
+    def enable_progress_bars():
+        pass
+
+# HuggingFace datasets Map/Filter bars use a long default bar; on narrow terminals (e.g. docker exec)
+# the [{elapsed}<{remaining}, rate] segment is pushed past the column width. Shorter format + dynamic width.
+_pbar_orig_init = _hf_datasets_tqdm_cls.__init__
+
+
+def _hf_datasets_tqdm_init(self, *args, **kwargs):
+    kwargs.setdefault(
+        "bar_format",
+        "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+    )
+    kwargs.setdefault("dynamic_ncols", True)
+    kwargs.setdefault("smoothing", 0.05)
+    _pbar_orig_init(self, *args, **kwargs)
+
+
+_hf_datasets_tqdm_cls.__init__ = _hf_datasets_tqdm_init  # type: ignore[method-assign]
+
 from tqdm.auto import tqdm
 from transformers import BertForMaskedLM, BertForTokenClassification, BertForSequenceClassification
 
@@ -1219,6 +1252,9 @@ class InSilicoPerturber:
         
         if self.cell_states_to_model is None:
             state_embs_dict = None
+            logger.info(
+                "Perturbing cells — the progress bar below shows ETA for the full perturbation pass."
+            )
         else:
             # confirm that all states are valid to prevent futile filtering
             state_name = self.cell_states_to_model["state_key"]
@@ -1229,6 +1265,10 @@ class InSilicoPerturber:
                         f"{value} is not present in the dataset's {state_name} attribute.")
                     raise
             # get dictionary of average cell state embeddings for comparison
+            logger.info(
+                "ISP phase 1/2: computing reference embeddings for cell states "
+                "(no overall ETA; typically shorter than phase 2)."
+            )
             downsampled_data = downsample_and_sort(filtered_input_data, self.max_ncells)
             state_embs_dict = get_cell_state_avg_embs(model,
                                                       downsampled_data,
@@ -1242,6 +1282,10 @@ class InSilicoPerturber:
             def filter_for_origin(example):
                 return example[state_name] in [start_state]
             filtered_input_data = filtered_input_data.filter(filter_for_origin, num_proc=self.nproc)
+            logger.info(
+                "ISP phase 2/2: perturbing cells — "
+                "the progress bar below is the main run; ETA is for this phase only."
+            )
         self.in_silico_perturb(model,
                               filtered_input_data,
                               layer_to_quant,
@@ -1420,41 +1464,144 @@ class InSilicoPerturber:
         # make perturbation batch w/ multiple perturbations in single cell
         if self.perturb_group == False:
 
-            for i in tqdm(
-                range(len(filtered_input_data)),
-                desc="In silico perturbation",
-                unit="cell",
-                smoothing=0.05,
-                bar_format=(
-                    "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
-                    "[{elapsed}<{remaining}, {rate_fmt}]"
-                ),
-            ):
-                example_cell = filtered_input_data.select([i])
-                original_emb = forward_pass_single_cell(model, example_cell, layer_to_quant)
-                gene_list = torch.squeeze(_force_tensor(example_cell["input_ids"]))
+            n_cells = len(filtered_input_data)
+            _isp_bar_desc = (
+                "ISP phase 2/2: perturb cells"
+                if self.cell_states_to_model is not None
+                else "ISP: perturb cells"
+            )
+            # Inner HuggingFace map() calls would spam Map bars and hide this ETA bar.
+            disable_progress_bars()
+            try:
+                for i in tqdm(
+                    range(n_cells),
+                    desc=_isp_bar_desc,
+                    total=n_cells,
+                    unit="cell",
+                    smoothing=0.05,
+                    mininterval=0.5,
+                    file=sys.stderr,
+                    bar_format=(
+                        "{desc} | {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
+                        "[elapsed {elapsed} · ETA {remaining} · {rate_fmt}]"
+                    ),
+                ):
+                    example_cell = filtered_input_data.select([i])
+                    original_emb = forward_pass_single_cell(model, example_cell, layer_to_quant)
+                    gene_list = torch.squeeze(_force_tensor(example_cell["input_ids"]))
                 
-                # reset to original type to prevent downstream issues due to forward_pass_single_cell modifying as torch format in place
-                example_cell = filtered_input_data.select([i])
+                    # reset to original type to prevent downstream issues due to forward_pass_single_cell modifying as torch format in place
+                    example_cell = filtered_input_data.select([i])
 
-                if self.anchor_token is None:
-                    for combo_lvl in range(self.combos+1):
+                    if self.anchor_token is None:
+                        for combo_lvl in range(self.combos+1):
+                            perturbation_batch, indices_to_perturb = make_perturbation_batch(example_cell, 
+                                                                                            self.perturb_type,
+                                                                                            self.tokens_to_perturb,
+                                                                                            self.perturb_rank_shift,
+                                                                                            self.perturb_rank_direct_shift,
+                                                                                            self.anchor_token,
+                                                                                            combo_lvl,
+                                                                                            self.nproc)
+                            cos_sims_data = quant_cos_sims(model,
+                                                           self.perturb_type,
+                                                           perturbation_batch,
+                                                           self.perturb_rank_shift,
+                                                           self.perturb_rank_direct_shift, 
+                                                           self.forward_batch_size, 
+                                                           layer_to_quant, 
+                                                           original_emb, 
+                                                           self.tokens_to_perturb,
+                                                           indices_to_perturb,
+                                                           self.perturb_group,
+                                                           self.cell_states_to_model,
+                                                           state_embs_dict,
+                                                           self.pad_token_id,
+                                                           model_input_size,
+                                                           self.nproc)
+
+                            if self.cell_states_to_model is None:
+                                # update cos sims dict
+                                # key is tuple of (perturbed_gene, affected_gene)
+                                # or (perturbed_gene, "cell_emb") for avg cell emb change
+                                #cos_sims_data = cos_sims_data.to("cuda")
+                                cos_sims_data = cos_sims_data.to(ISP_device)
+                                for j in range(cos_sims_data.shape[0]):
+                                    if self.tokens_to_perturb != "all":
+                                        j_index = torch.tensor(indices_to_perturb[j])
+                                        if j_index.shape[0]>1:
+                                            j_index = torch.squeeze(j_index)
+                                    else:
+                                        j_index = torch.tensor([j])
+
+                                    if self.perturb_type in ("overexpress", "activate"):
+                                        perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
+                                    else:
+                                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
+
+                                    if perturbed_gene.shape[0]==1:
+                                        perturbed_gene = perturbed_gene.item()
+                                    elif perturbed_gene.shape[0]>1:
+                                        perturbed_gene = tuple(perturbed_gene.tolist())
+
+                                    cell_cos_sim = torch.mean(cos_sims_data[j]).item()
+                                    cos_sims_dict[(perturbed_gene, "cell_emb")] += [cell_cos_sim]
+
+                                    # not_j_index = list(set(i for i in range(gene_list.shape[0])).difference(j_index))
+                                    # gene_list_j = torch.index_select(gene_list, 0, j_index)
+                                    if self.emb_mode == "cell_and_gene":
+                                        for k in range(cos_sims_data.shape[1]):
+                                            cos_sim_value = cos_sims_data[j][k]
+                                            affected_gene = gene_list[k].item()
+                                            cos_sims_dict[(perturbed_gene, affected_gene)] += [cos_sim_value.item()]
+                            else:
+                                # update cos sims dict
+                                # key is tuple of (perturbed_gene, "cell_emb")
+                                # value is list of tuples of cos sims for cell_states_to_model
+                                origin_state_key = self.cell_states_to_model["start_state"]
+                                cos_sims_origin = cos_sims_data[origin_state_key]
+
+                                for j in range(cos_sims_origin.shape[0]):
+                                    if (self.tokens_to_perturb != "all") or (combo_lvl>0):
+                                        j_index = torch.tensor(indices_to_perturb[j])
+                                        if j_index.shape[0]>1:
+                                            j_index = torch.squeeze(j_index)
+                                    else:
+                                        j_index = torch.tensor([j])
+
+                                    if self.perturb_type in ("overexpress", "activate"):
+                                        perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
+                                    else:
+                                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
+
+                                    if perturbed_gene.shape[0]==1:
+                                        perturbed_gene = perturbed_gene.item()
+                                    elif perturbed_gene.shape[0]>1:
+                                        perturbed_gene = tuple(perturbed_gene.tolist())
+
+                                    data_list = []
+                                    for data in list(cos_sims_data.values()):
+                                        #data_item = data.to("cuda")
+                                        data_item = data.to(ISP_device)
+                                        cell_data = torch.mean(data_item[j]).item()
+                                        data_list += [cell_data]
+                                    cos_sims_dict[(perturbed_gene, "cell_emb")] += [tuple(data_list)]
+
+                    elif self.anchor_token is not None:
                         perturbation_batch, indices_to_perturb = make_perturbation_batch(example_cell, 
-                                                                                        self.perturb_type,
-                                                                                        self.tokens_to_perturb,
-                                                                                        self.perturb_rank_shift,
-                                                                                        self.perturb_rank_direct_shift,
-                                                                                        self.anchor_token,
-                                                                                        combo_lvl,
-                                                                                        self.nproc)
+                                                                                         self.perturb_type,
+                                                                                         self.tokens_to_perturb,
+                                                                                         None,  # first run without anchor token to test individual gene perturbations
+                                                                                         0,
+                                                                                         self.nproc)
                         cos_sims_data = quant_cos_sims(model,
                                                        self.perturb_type,
                                                        perturbation_batch,
                                                        self.perturb_rank_shift,
                                                        self.perturb_rank_direct_shift, 
-                                                       self.forward_batch_size, 
-                                                       layer_to_quant, 
-                                                       original_emb, 
+                                                       self.forward_batch_size,
+                                                       layer_to_quant,
+                                                       original_emb,
                                                        self.tokens_to_perturb,
                                                        indices_to_perturb,
                                                        self.perturb_group,
@@ -1463,172 +1610,84 @@ class InSilicoPerturber:
                                                        self.pad_token_id,
                                                        model_input_size,
                                                        self.nproc)
+                        cos_sims_data = cos_sims_data.to(ISP_device)
 
+                        combo_perturbation_batch, combo_indices_to_perturb = make_perturbation_batch(example_cell, 
+                                                                                                     self.perturb_type,
+                                                                                                     self.tokens_to_perturb,
+                                                                                                     self.anchor_token,
+                                                                                                     1,
+                                                                                                     self.nproc)
+                        combo_cos_sims_data = quant_cos_sims(model,
+                                                             self.perturb_type,
+                                                             combo_perturbation_batch,
+                                                             self.perturb_rank_shift,
+                                                             self.perturb_rank_direct_shift, 
+                                                             self.forward_batch_size,
+                                                             layer_to_quant,
+                                                             original_emb,
+                                                             self.tokens_to_perturb,
+                                                             combo_indices_to_perturb,
+                                                             self.perturb_group,
+                                                             self.cell_states_to_model,
+                                                             state_embs_dict,
+                                                             self.pad_token_id,
+                                                             model_input_size,
+                                                             self.nproc)
+                        combo_cos_sims_data = combo_cos_sims_data.to(ISP_device)
+
+                        # update cos sims dict
+                        # key is tuple of (perturbed_gene, "cell_emb") for avg cell emb change
+                        anchor_index = example_cell["input_ids"][0].index(self.anchor_token[0])
+                        anchor_cell_cos_sim = torch.mean(cos_sims_data[anchor_index]).item()
+                        non_anchor_indices = [k for k in range(cos_sims_data.shape[0]) if k != anchor_index]
+                        cos_sims_data = cos_sims_data[non_anchor_indices,:]
+
+                        for j in range(cos_sims_data.shape[0]):
+
+                            if j<anchor_index:
+                                j_index = torch.tensor([j])
+                            else:
+                                j_index = torch.tensor([j+1])
+
+                            perturbed_gene = torch.index_select(gene_list, 0, j_index)
+                            perturbed_gene = perturbed_gene.item()
+
+                            cell_cos_sim = torch.mean(cos_sims_data[j]).item()
+                            combo_cos_sim = torch.mean(combo_cos_sims_data[j]).item()
+                            cos_sims_dict[(perturbed_gene, "cell_emb")] += [(anchor_cell_cos_sim, # cos sim anchor gene alone
+                                                                             cell_cos_sim, # cos sim deleted gene alone
+                                                                             combo_cos_sim)] # cos sim anchor gene + deleted gene
+
+                    # save dict to disk every 100 cells
+                    if (i/100).is_integer():
+                        with open(f"{output_path_prefix}{pickle_batch}_raw.pickle", "wb") as fp:
+                            pickle.dump(cos_sims_dict, fp)
+                    # reset and clear memory every 1000 cells
+                    if (i/1000).is_integer():
+                        pickle_batch = pickle_batch+1
+                        # clear memory
+                        del perturbed_gene
+                        del cos_sims_data
                         if self.cell_states_to_model is None:
-                            # update cos sims dict
-                            # key is tuple of (perturbed_gene, affected_gene)
-                            # or (perturbed_gene, "cell_emb") for avg cell emb change
-                            #cos_sims_data = cos_sims_data.to("cuda")
-                            cos_sims_data = cos_sims_data.to(ISP_device)
-                            for j in range(cos_sims_data.shape[0]):
-                                if self.tokens_to_perturb != "all":
-                                    j_index = torch.tensor(indices_to_perturb[j])
-                                    if j_index.shape[0]>1:
-                                        j_index = torch.squeeze(j_index)
-                                else:
-                                    j_index = torch.tensor([j])
-
-                                if self.perturb_type in ("overexpress", "activate"):
-                                    perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
-                                else:
-                                    perturbed_gene = torch.index_select(gene_list, 0, j_index)
-
-                                if perturbed_gene.shape[0]==1:
-                                    perturbed_gene = perturbed_gene.item()
-                                elif perturbed_gene.shape[0]>1:
-                                    perturbed_gene = tuple(perturbed_gene.tolist())
-
-                                cell_cos_sim = torch.mean(cos_sims_data[j]).item()
-                                cos_sims_dict[(perturbed_gene, "cell_emb")] += [cell_cos_sim]
-
-                                # not_j_index = list(set(i for i in range(gene_list.shape[0])).difference(j_index))
-                                # gene_list_j = torch.index_select(gene_list, 0, j_index)
-                                if self.emb_mode == "cell_and_gene":
-                                    for k in range(cos_sims_data.shape[1]):
-                                        cos_sim_value = cos_sims_data[j][k]
-                                        affected_gene = gene_list[k].item()
-                                        cos_sims_dict[(perturbed_gene, affected_gene)] += [cos_sim_value.item()]
+                            del cell_cos_sim
+                        if self.cell_states_to_model is not None:
+                            del cell_data
+                            del data_list
+                        elif self.anchor_token is None:
+                            if self.emb_mode == "cell_and_gene":
+                                del affected_gene
+                                del cos_sim_value
                         else:
-                            # update cos sims dict
-                            # key is tuple of (perturbed_gene, "cell_emb")
-                            # value is list of tuples of cos sims for cell_states_to_model
-                            origin_state_key = self.cell_states_to_model["start_state"]
-                            cos_sims_origin = cos_sims_data[origin_state_key]
+                            del combo_cos_sim
+                            del combo_cos_sims_data
+                        # reset dict
+                        del cos_sims_dict
+                        cos_sims_dict = defaultdict(list)
+                        torch.cuda.empty_cache()
 
-                            for j in range(cos_sims_origin.shape[0]):
-                                if (self.tokens_to_perturb != "all") or (combo_lvl>0):
-                                    j_index = torch.tensor(indices_to_perturb[j])
-                                    if j_index.shape[0]>1:
-                                        j_index = torch.squeeze(j_index)
-                                else:
-                                    j_index = torch.tensor([j])
-
-                                if self.perturb_type in ("overexpress", "activate"):
-                                    perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
-                                else:
-                                    perturbed_gene = torch.index_select(gene_list, 0, j_index)
-
-                                if perturbed_gene.shape[0]==1:
-                                    perturbed_gene = perturbed_gene.item()
-                                elif perturbed_gene.shape[0]>1:
-                                    perturbed_gene = tuple(perturbed_gene.tolist())
-
-                                data_list = []
-                                for data in list(cos_sims_data.values()):
-                                    #data_item = data.to("cuda")
-                                    data_item = data.to(ISP_device)
-                                    cell_data = torch.mean(data_item[j]).item()
-                                    data_list += [cell_data]
-                                cos_sims_dict[(perturbed_gene, "cell_emb")] += [tuple(data_list)]
-
-                elif self.anchor_token is not None:
-                    perturbation_batch, indices_to_perturb = make_perturbation_batch(example_cell, 
-                                                                                     self.perturb_type,
-                                                                                     self.tokens_to_perturb,
-                                                                                     None,  # first run without anchor token to test individual gene perturbations
-                                                                                     0,
-                                                                                     self.nproc)
-                    cos_sims_data = quant_cos_sims(model,
-                                                   self.perturb_type,
-                                                   perturbation_batch,
-                                                   self.perturb_rank_shift,
-                                                   self.perturb_rank_direct_shift, 
-                                                   self.forward_batch_size,
-                                                   layer_to_quant,
-                                                   original_emb,
-                                                   self.tokens_to_perturb,
-                                                   indices_to_perturb,
-                                                   self.perturb_group,
-                                                   self.cell_states_to_model,
-                                                   state_embs_dict,
-                                                   self.pad_token_id,
-                                                   model_input_size,
-                                                   self.nproc)
-                    cos_sims_data = cos_sims_data.to(ISP_device)
-
-                    combo_perturbation_batch, combo_indices_to_perturb = make_perturbation_batch(example_cell, 
-                                                                                                 self.perturb_type,
-                                                                                                 self.tokens_to_perturb,
-                                                                                                 self.anchor_token,
-                                                                                                 1,
-                                                                                                 self.nproc)
-                    combo_cos_sims_data = quant_cos_sims(model,
-                                                         self.perturb_type,
-                                                         combo_perturbation_batch,
-                                                         self.perturb_rank_shift,
-                                                         self.perturb_rank_direct_shift, 
-                                                         self.forward_batch_size,
-                                                         layer_to_quant,
-                                                         original_emb,
-                                                         self.tokens_to_perturb,
-                                                         combo_indices_to_perturb,
-                                                         self.perturb_group,
-                                                         self.cell_states_to_model,
-                                                         state_embs_dict,
-                                                         self.pad_token_id,
-                                                         model_input_size,
-                                                         self.nproc)
-                    combo_cos_sims_data = combo_cos_sims_data.to(ISP_device)
-
-                    # update cos sims dict
-                    # key is tuple of (perturbed_gene, "cell_emb") for avg cell emb change
-                    anchor_index = example_cell["input_ids"][0].index(self.anchor_token[0])
-                    anchor_cell_cos_sim = torch.mean(cos_sims_data[anchor_index]).item()
-                    non_anchor_indices = [k for k in range(cos_sims_data.shape[0]) if k != anchor_index]
-                    cos_sims_data = cos_sims_data[non_anchor_indices,:]
-
-                    for j in range(cos_sims_data.shape[0]):
-
-                        if j<anchor_index:
-                            j_index = torch.tensor([j])
-                        else:
-                            j_index = torch.tensor([j+1])
-
-                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
-                        perturbed_gene = perturbed_gene.item()
-
-                        cell_cos_sim = torch.mean(cos_sims_data[j]).item()
-                        combo_cos_sim = torch.mean(combo_cos_sims_data[j]).item()
-                        cos_sims_dict[(perturbed_gene, "cell_emb")] += [(anchor_cell_cos_sim, # cos sim anchor gene alone
-                                                                         cell_cos_sim, # cos sim deleted gene alone
-                                                                         combo_cos_sim)] # cos sim anchor gene + deleted gene
-
-                # save dict to disk every 100 cells
-                if (i/100).is_integer():
-                    with open(f"{output_path_prefix}{pickle_batch}_raw.pickle", "wb") as fp:
-                        pickle.dump(cos_sims_dict, fp)
-                # reset and clear memory every 1000 cells
-                if (i/1000).is_integer():
-                    pickle_batch = pickle_batch+1
-                    # clear memory
-                    del perturbed_gene
-                    del cos_sims_data
-                    if self.cell_states_to_model is None:
-                        del cell_cos_sim
-                    if self.cell_states_to_model is not None:
-                        del cell_data
-                        del data_list
-                    elif self.anchor_token is None:
-                        if self.emb_mode == "cell_and_gene":
-                            del affected_gene
-                            del cos_sim_value
-                    else:
-                        del combo_cos_sim
-                        del combo_cos_sims_data
-                    # reset dict
-                    del cos_sims_dict
-                    cos_sims_dict = defaultdict(list)
-                    torch.cuda.empty_cache()
+            finally:
+                enable_progress_bars()
 
             # save remainder cells
             with open(f"{output_path_prefix}{pickle_batch}_raw.pickle", "wb") as fp:
