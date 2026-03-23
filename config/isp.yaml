@@ -45,6 +45,7 @@ analysis:
 
 runtime:
   # GPU minibatch for transformer forwards; raise until just below OOM.
-  forward_batch_size: 200
-  # CPU workers for HuggingFace datasets map/filter (not GPU count). High nproc uses more RAM.
-  nproc: 8
+  forward_batch_size: 220
+  # HuggingFace datasets map/filter workers (CPU parallelism, not GPU). On ~20 cores, 8–16 is typical;
+  # going higher can contend with the main process and increase RAM without speeding ISP much.
+  nproc: 16

@@ -83,6 +83,30 @@ accelerator = Accelerator()
 ISP_device = accelerator.device
 
 
+def _tensor_to_device(t: torch.Tensor, *, non_blocking: bool = True) -> torch.Tensor:
+    """CPU→GPU copy with optional async H2D (use with pinned CPU tensors for best overlap)."""
+    if t.device == ISP_device:
+        return t
+    return t.to(ISP_device, non_blocking=non_blocking)
+
+
+def _forward_with_oom_retry(forward_callable):
+    """Run a forward pass; on CUDA OOM only, empty cache once and retry (preserves allocator between steps)."""
+    try:
+        return forward_callable()
+    except RuntimeError as e:
+        if "out of memory" not in str(e).lower():
+            raise
+        logger.warning("CUDA OOM during forward; emptying cache and retrying once: %s", e)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        try:
+            return forward_callable()
+        except RuntimeError:
+            logger.error("Forward failed after OOM retry")
+            raise
+
+
 def _configure_cuda_performance():
     """Best-effort GPU throughput settings (TF32 matmul, etc.). Safe no-ops on CPU."""
     if not torch.cuda.is_available():
@@ -208,11 +232,9 @@ def _force_tensor(data):
 def forward_pass_single_cell(model, example_cell, layer_to_quant):
     example_cell.set_format(type="torch")
     input_data = _force_tensor(example_cell["input_ids"])
+    input_ids = _tensor_to_device(input_data)
     with torch.no_grad():
-        outputs = model(
-            #input_ids = input_data.to("cuda")
-            input_ids = input_data.to(ISP_device)
-        )
+        outputs = _forward_with_oom_retry(lambda: model(input_ids=input_ids))
     emb = torch.squeeze(outputs.hidden_states[layer_to_quant])
     del outputs
     return emb
@@ -462,12 +484,11 @@ def get_cell_state_avg_embs(model,
                                                    pad_token_id, 
                                                    model_input_size)
             attention_mask = gen_attention_mask(state_minibatch, max_len)
+            input_ids = _tensor_to_device(input_data_minibatch)
 
             with torch.no_grad():
-                outputs = model(
-                    #input_ids = input_data_minibatch.to("cuda"),
-                    input_ids = input_data_minibatch.to(ISP_device),
-                    attention_mask = attention_mask
+                outputs = _forward_with_oom_retry(
+                    lambda: model(input_ids=input_ids, attention_mask=attention_mask),
                 )
             
             state_embs_i = outputs.hidden_states[layer_to_quant]
@@ -479,7 +500,8 @@ def get_cell_state_avg_embs(model,
             del state_embs_i
 
         state_embs = torch.cat(state_embs_list)
-        avg_state_emb = mean_nonpadding_embs(state_embs, torch.Tensor(original_lens).to(ISP_device))
+        lens_t = torch.as_tensor(original_lens, dtype=torch.float).to(ISP_device, non_blocking=True)
+        avg_state_emb = mean_nonpadding_embs(state_embs, lens_t)
         avg_state_emb = torch.mean(avg_state_emb, dim=0, keepdim=True)
         state_embs_dict[possible_state] = avg_state_emb
     return state_embs_dict
@@ -556,12 +578,12 @@ def quant_cos_sims(model,
         
         input_data_minibatch = _force_tensor(minibatch["input_ids"])
         attention_mask = gen_attention_mask(minibatch, max_len)
+        input_ids = _tensor_to_device(input_data_minibatch)
         
         # extract embeddings for perturbation minibatch
         with torch.no_grad():
-            outputs = model(
-                input_ids = input_data_minibatch.to(ISP_device),
-                attention_mask = attention_mask
+            outputs = _forward_with_oom_retry(
+                lambda: model(input_ids=input_ids, attention_mask=attention_mask),
             )
         return outputs, max_len
     for i in range(0, total_batch_length, forward_batch_size):
@@ -715,8 +737,12 @@ def quant_cos_sims(model,
             if perturb_group == False:
                 original_emb = comparison_batch[i:max_range]
             else:
-                original_minibatch_lengths = torch.tensor(original_minibatch["length"], device=ISP_device)
-                minibatch_lengths = torch.tensor(perturbation_minibatch["length"], device=ISP_device)
+                original_minibatch_lengths = torch.as_tensor(
+                    original_minibatch["length"], dtype=torch.long
+                ).to(ISP_device, non_blocking=True)
+                minibatch_lengths = torch.as_tensor(
+                    perturbation_minibatch["length"], dtype=torch.long
+                ).to(ISP_device, non_blocking=True)
             for state in possible_states:
                 if perturb_group == False:
                     cos_sims_vs_alt_dict[state] += cos_sim_shift(original_emb, 
@@ -848,13 +874,13 @@ def gen_attention_mask(minibatch_encoding, max_len = None):
                       else [1]*max_len
                       for original_len in original_lens]
     #return torch.tensor(attention_mask).to("cuda")
-    return torch.tensor(attention_mask).to(ISP_device)
+    return torch.tensor(attention_mask, dtype=torch.long).to(ISP_device, non_blocking=True)
 
 # get cell embeddings excluding padding
 def mean_nonpadding_embs(embs, original_lens):
     # mask based on padding lengths
     #mask = torch.arange(embs.size(1)).unsqueeze(0).to("cuda") < original_lens.unsqueeze(1)
-    mask = torch.arange(embs.size(1)).unsqueeze(0).to(ISP_device) < original_lens.unsqueeze(1)
+    mask = torch.arange(embs.size(1), device=embs.device).unsqueeze(0) < original_lens.unsqueeze(1)
 
     # extend mask dimensions to match the embeddings tensor
     mask = mask.unsqueeze(2).expand_as(embs)
@@ -1425,7 +1451,7 @@ class InSilicoPerturber:
                 # or (perturbed_genes, "cell_emb") for avg cell emb change
                 
                 #cos_sims_data = cos_sims_data.to("cuda")
-                cos_sims_data = cos_sims_data.to(ISP_device)
+                cos_sims_data = _tensor_to_device(cos_sims_data)
                 max_padded_len = cos_sims_data.shape[1]
                 for j in range(cos_sims_data.shape[0]):
                     # remove padding before mean pooling cell embedding
@@ -1454,7 +1480,7 @@ class InSilicoPerturber:
                     data_list = []
                     for data in list(cos_sims_data.values()):
                         #data_item = data.to("cuda")
-                        data_item = data.to(ISP_device)
+                        data_item = _tensor_to_device(data)
                         data_list += [data_item[j].item()]
                     cos_sims_dict[(perturbed_genes, "cell_emb")] += [tuple(data_list)]
             
@@ -1525,7 +1551,7 @@ class InSilicoPerturber:
                                 # key is tuple of (perturbed_gene, affected_gene)
                                 # or (perturbed_gene, "cell_emb") for avg cell emb change
                                 #cos_sims_data = cos_sims_data.to("cuda")
-                                cos_sims_data = cos_sims_data.to(ISP_device)
+                                cos_sims_data = _tensor_to_device(cos_sims_data)
                                 for j in range(cos_sims_data.shape[0]):
                                     if self.tokens_to_perturb != "all":
                                         j_index = torch.tensor(indices_to_perturb[j])
@@ -1582,7 +1608,7 @@ class InSilicoPerturber:
                                     data_list = []
                                     for data in list(cos_sims_data.values()):
                                         #data_item = data.to("cuda")
-                                        data_item = data.to(ISP_device)
+                                        data_item = _tensor_to_device(data)
                                         cell_data = torch.mean(data_item[j]).item()
                                         data_list += [cell_data]
                                     cos_sims_dict[(perturbed_gene, "cell_emb")] += [tuple(data_list)]
@@ -1610,7 +1636,7 @@ class InSilicoPerturber:
                                                        self.pad_token_id,
                                                        model_input_size,
                                                        self.nproc)
-                        cos_sims_data = cos_sims_data.to(ISP_device)
+                        cos_sims_data = _tensor_to_device(cos_sims_data)
 
                         combo_perturbation_batch, combo_indices_to_perturb = make_perturbation_batch(example_cell, 
                                                                                                      self.perturb_type,
@@ -1634,7 +1660,7 @@ class InSilicoPerturber:
                                                              self.pad_token_id,
                                                              model_input_size,
                                                              self.nproc)
-                        combo_cos_sims_data = combo_cos_sims_data.to(ISP_device)
+                        combo_cos_sims_data = _tensor_to_device(combo_cos_sims_data)
 
                         # update cos sims dict
                         # key is tuple of (perturbed_gene, "cell_emb") for avg cell emb change
@@ -1684,7 +1710,6 @@ class InSilicoPerturber:
                         # reset dict
                         del cos_sims_dict
                         cos_sims_dict = defaultdict(list)
-                        torch.cuda.empty_cache()
 
             finally:
                 enable_progress_bars()
