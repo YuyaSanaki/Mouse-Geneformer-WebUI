@@ -710,8 +710,11 @@ class InSilicoPerturberStats:
             cos_sims_df = isp_aggregate_grouped_perturb(cos_sims_df_initial, dict_list)
 
         # save perturbation stats to output_path
-        output_path = (Path(output_directory) / output_prefix).with_suffix(".csv")
-        cos_sims_df.to_csv(output_path)
+        output_path_csv = (Path(output_directory) / output_prefix).with_suffix(".csv")
+        cos_sims_df.to_csv(output_path_csv)
+        
+        output_path_parquet = (Path(output_directory) / output_prefix).with_suffix(".parquet")
+        cos_sims_df.to_parquet(output_path_parquet)
 
     def token_to_gene_name(self, item):
         if isinstance(item,int):

@@ -28,6 +28,7 @@ Usage:
 # imports
 import itertools as it
 import logging
+import os
 import numpy as np
 import pickle
 import re
@@ -35,17 +36,34 @@ import seaborn as sns; sns.set()
 import torch
 from collections import defaultdict
 from datasets import Dataset, load_from_disk
-from tqdm.notebook import trange
+from tqdm.auto import tqdm
 from transformers import BertForMaskedLM, BertForTokenClassification, BertForSequenceClassification
 
 from .tokenizer import TOKEN_DICTIONARY_FILE, USE_GPU
+from accelerate import Accelerator
 
 import sys
 
 logger = logging.getLogger(__name__)
 
+accelerator = Accelerator()
+ISP_device = accelerator.device
 
-ISP_device = USE_GPU
+
+def _configure_cuda_performance():
+    """Best-effort GPU throughput settings (TF32 matmul, etc.). Safe no-ops on CPU."""
+    if not torch.cuda.is_available():
+        return
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
+    torch.backends.cuda.matmul.allow_tf32 = True
+    if getattr(torch.backends, "cudnn", None) is not None and torch.backends.cudnn.is_available():
+        torch.backends.cudnn.allow_tf32 = True
+
+
+_configure_cuda_performance()
 
 
 # load data and filter by defined criteria
@@ -68,22 +86,29 @@ def load_model(model_type, num_classes, model_directory):
     if model_type == "Pretrained":
         model = BertForMaskedLM.from_pretrained(model_directory, 
                                                 output_hidden_states=True, 
-                                                output_attentions=False)
+                                                output_attentions=False,
+                                                dtype=torch.bfloat16)
     elif model_type == "GeneClassifier":
         model = BertForTokenClassification.from_pretrained(model_directory,
                                                 num_labels=num_classes,
                                                 output_hidden_states=True, 
-                                                output_attentions=False)
+                                                output_attentions=False,
+                                                dtype=torch.bfloat16)
     elif model_type == "CellClassifier":
         model = BertForSequenceClassification.from_pretrained(model_directory, 
                                                 num_labels=num_classes,
                                                 output_hidden_states=True, 
-                                                output_attentions=False)
-    # put the model in eval mode for fwd pass
+                                                output_attentions=False,
+                                                dtype=torch.bfloat16)
+    
+    model = model.to(accelerator.device)
     model.eval()
-    #model = model.to("cuda:0")
-    #model = model.to("cuda")
-    model = model.to(ISP_device)
+    if os.environ.get("GENEFORMER_TORCH_COMPILE", "").lower() in ("1", "true", "yes"):
+        try:
+            model = torch.compile(model, mode="reduce-overhead", dynamic=True)
+        except Exception as e:
+            logger.warning("GENEFORMER_TORCH_COMPILE set but torch.compile failed: %s", e)
+    model = accelerator.prepare(model)
     return model
 
 def quant_layers(model):
@@ -419,7 +444,6 @@ def get_cell_state_avg_embs(model,
             del input_data_minibatch
             del attention_mask
             del state_embs_i
-            torch.cuda.empty_cache()
 
         state_embs = torch.cat(state_embs_list)
         avg_state_emb = mean_nonpadding_embs(state_embs, torch.Tensor(original_lens).to(ISP_device))
@@ -679,7 +703,6 @@ def quant_cos_sims(model,
             del minibatch_comparison
         if perturb_group == True:
             del original_minibatch_emb
-        torch.cuda.empty_cache()
     if cell_states_to_model is None:
         cos_sims_stack = torch.cat(cos_sims)
         return cos_sims_stack
@@ -1265,6 +1288,17 @@ class InSilicoPerturber:
         cos_sims_dict = defaultdict(list)
         pickle_batch = -1
         filtered_input_data = downsample_and_sort(filtered_input_data, self.max_ncells)
+        
+        # Determine cell bounds across distributed nodes via accelerate
+        if self.cell_inds_to_perturb == "all" and accelerator.num_processes > 1:
+            total_cells = len(filtered_input_data)
+            per_rank = total_cells // accelerator.num_processes
+            start = accelerator.process_index * per_rank
+            end = start + per_rank if accelerator.process_index < accelerator.num_processes - 1 else total_cells
+            self.cell_inds_to_perturb = {"start": start, "end": end}
+            output_prefix = f"{output_prefix}_rank{accelerator.process_index}"
+            logger.info(f"Accelerate sharding: rank {accelerator.process_index}/{accelerator.num_processes} processing cells {start} to {end}")
+
         if self.cell_inds_to_perturb != "all":
             if self.cell_inds_to_perturb["start"] >= len(filtered_input_data):
                 logger.error("cell_inds_to_perturb['start'] is larger than the filtered dataset.")
@@ -1386,7 +1420,16 @@ class InSilicoPerturber:
         # make perturbation batch w/ multiple perturbations in single cell
         if self.perturb_group == False:
 
-            for i in trange(len(filtered_input_data)):
+            for i in tqdm(
+                range(len(filtered_input_data)),
+                desc="In silico perturbation",
+                unit="cell",
+                smoothing=0.05,
+                bar_format=(
+                    "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
+                    "[{elapsed}<{remaining}, {rate_fmt}]"
+                ),
+            ):
                 example_cell = filtered_input_data.select([i])
                 original_emb = forward_pass_single_cell(model, example_cell, layer_to_quant)
                 gene_list = torch.squeeze(_force_tensor(example_cell["input_ids"]))
