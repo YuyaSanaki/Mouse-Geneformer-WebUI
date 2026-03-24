@@ -34,7 +34,7 @@ scp /path/to/file yuyasanaki@192.168.200.102:/Users/yuyasanaki/desktop
 For the details, see [**docs/in-silico pertabation.md**](docs/in-silico%20pertabation.md) (end-to-end workflow for new biology, tokenized `.dataset`, and config).
 
 
-1. Settings **`config/isp.yaml`** (paths, perturbation, model, `runtime.forward_batch_size`, `runtime.nproc`, etc.). Edit that file on the host; it appears as `/app/config/isp.yaml` in the container.
+1. Settings **[`config/isp.yaml`](../config/isp.yaml)** (paths, perturbation, model, `runtime.forward_batch_size`, `runtime.nproc`, etc.). Edit that file on the host; it appears as `/app/config/isp.yaml` in the container.
 
 2.
 ```bash
@@ -42,21 +42,12 @@ docker compose run --rm isp
 ```
 This runs `accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
 
-
-**Alternative:** if a long-lived container is already running (`docker compose up -d mouse-geneformer`):
-
-```bash
-docker exec -it mouse_geneformer_container accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml
-```
-
-Outputs go under `paths.output_root` in `config/isp.yaml`, in **date-stamped** subfolders: `{output_root}/{YYYYMMDD}/isp_results`, `{output_root}/{YYYYMMDD}/ispstats_results`, and **`{output_root}/{YYYYMMDD}/figures/`** (PNG plots from `isp_analysis.py` after stats). Disable extra analysis with `analysis.enabled: false` or `--skip-analysis`. Default date: today (`--output-date` / `ISP_OUTPUT_DATE`). On the host this is under your repo bind mount (e.g. `./output/...`).
-
-
+Outputs go under ./output/DATE/isp_results and ./output/DATE/isp_results. There will also be simple analysis figures.
 
 
 
 # Other types of Runs
-## docker environment
+## docker container
 
 Build the image once, then use Compose services (repo is mounted at `/app` in the container).
 
@@ -65,6 +56,7 @@ docker compose build mouse-geneformer
 ```
 
 ## Jupyter Lab (interactive)
+juoyter notebooks were not fully edited to match docker compose services.
 
 ```bash
 docker compose up -d mouse-geneformer

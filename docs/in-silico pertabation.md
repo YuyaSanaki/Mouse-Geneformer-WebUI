@@ -71,7 +71,8 @@ ISP does **not** read **loom / h5ad / CSV** directly. After tokenization, it exp
 
 ---
 
-## 4. Configure `config/isp.yaml`
+## 4. Configure  [`config/isp.yaml`](../config/isp.yaml))
+
 
 Align the file with your **dataset column names** and **string labels**.
 
