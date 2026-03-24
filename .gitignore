@@ -3,6 +3,9 @@
 /models/
 /output/
 
+# Local Docker / Compose overrides
+.env
+
 # Python and Jupyter ignore
 __pycache__/
 *.py[cod]

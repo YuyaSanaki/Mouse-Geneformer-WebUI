@@ -1,13 +1,14 @@
 
 # Premise
-DGX spark (ARM64) 
-Docker env and use uv to install packages.
+Development is ongoing on DGX spark (ARM64).
+Supposed to work on Inte;/AMD/ARM CPU with NVIDIA GPU.
+All services will be run by docker compose. Not jupyter (major chang from original mouse-geneformer).
 
-To adapt DGX spark GPU, many changes in requirements.txt.
-optimize the Mouse-Geneformer pipeline for DGX Spark using Flash Attention 2, Hugging Face Accelerate, cuDF/cuML, and Parquet data formats.
 
 # Install
 clone rep
+cd ti the dir
+git lfs pull
 docker build
 
 MLM-re_token_dictionary_v1.pkl was missed from the repo. Download it from https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl
@@ -19,12 +20,9 @@ git lfs pull
 scp /path/to/file yuyasanaki@192.168.200.102:/Users/yuyasanaki/desktop
 
 
-
-
 # in-silico perturbation (docker compose service)
 For the details, see [**docs/in-silico pertabation.md**](docs/in-silico%20pertabation.md) (end-to-end workflow for new biology, tokenized `.dataset`, and config).
 
-in-silico perturbation (ISP) is predicting gene expression change in a cell type when a gene knockdown. The predicted result is ranked gene expression, not counts or fold-change per genes, so that it will show you a (rough) transcriptional landscape change regulated by the gene knocked out.
 
 1. Settings **`config/isp.yaml`** (paths, perturbation, model, `runtime.forward_batch_size`, `runtime.nproc`, etc.). Edit that file on the host; it appears as `/app/config/isp.yaml` in the container.
 
