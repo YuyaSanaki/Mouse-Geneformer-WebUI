@@ -24,5 +24,10 @@ RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
 # Copy the rest of the project
 COPY . .
 
+RUN chmod +x /app/scripts/container-entrypoint.sh
+
+# Arch-aware OpenMP preload (aarch64 only); see scripts/container-entrypoint.sh
+ENTRYPOINT ["/app/scripts/container-entrypoint.sh"]
+
 # Set the default command to bash
 CMD ["bash"]

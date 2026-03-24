@@ -3,6 +3,11 @@
 # Run as host UID/GID so files under the bind-mounted project (e.g. output/) are
 # owned by your user, not root. Override if needed: DOCKER_UID=$(id -u) DOCKER_GID=$(id -g)
 # docker compose run --rm isp   or set DOCKER_UID/DOCKER_GID in a .env file.
+#
+# GPU / CPU arch: same NVIDIA + nvidia-container-toolkit flow on x86_64 (amd64) and
+# aarch64 (ARM64, e.g. DGX Spark). Docker pulls the matching image arch. LD_PRELOAD for
+# the OpenMP workaround is set inside the container only when uname -m is aarch64
+# (scripts/container-entrypoint.sh). Override with env LD_PRELOAD if needed.
 
 x-geneformer-base: &geneformer-base
   image: mouse-geneformer:latest
@@ -17,8 +22,9 @@ x-geneformer-base: &geneformer-base
           - driver: nvidia
             count: all
             capabilities: [gpu]
+  # Optional: set LD_PRELOAD in .env to override the entrypoint’s aarch64 default.
   environment:
-    - LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1:/usr/local/lib/python3.12/dist-packages/scikit_learn.libs/libgomp-d22c30c5.so.1.0.0
+    - LD_PRELOAD=${LD_PRELOAD:-}
   ipc: host
   working_dir: /app
 

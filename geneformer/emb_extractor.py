@@ -121,7 +121,8 @@ def get_embs(model,
         del input_data_minibatch
         del embs_i
         del mean_embs
-        torch.cuda.empty_cache()            
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     if summary_stat is None:
         embs_stack = torch.cat(embs_list)
