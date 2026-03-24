@@ -91,14 +91,22 @@ Align the file with your **dataset column names** and **string labels**.
 
 ## 5. Run in Docker
 
-
-**Run ISP:**
+**Run ISP (Single GPU - Default):**
 ```bash
 docker compose run --rm isp
 ```
-  This invokes `accelerate launch … /app/run_isp.py --config /app/config/isp.yaml`.
+  This invokes `accelerate launch ... --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
 
-Alternative with Jupyter container already up: `docker exec -it mouse_geneformer_container accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`
+**Run ISP (Multiple GPUs):**
+To scale generation across multiple GPUs, pass the `ISP_NUM_GPUS` environment variable. For example, to run on 4 GPUs:
+```bash
+ISP_NUM_GPUS=4 docker compose run --rm isp
+```
+  *Note: The script safely multiplexes the processing across all GPUs using Accelerate, and ensures that the final figures and statistics are only consolidated once on the main process to avoid any race conditions.*
+
+Alternative with Jupyter container already up:
+- Single GPU: `docker exec -it mouse_geneformer_container accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`
+- Multi-GPU (e.g. 4 GPUs): `docker exec -it mouse_geneformer_container accelerate launch --num_processes 4 /app/run_isp.py --config /app/config/isp.yaml`
 
 ---
 
