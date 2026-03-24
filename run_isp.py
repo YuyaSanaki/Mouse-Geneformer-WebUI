@@ -22,6 +22,7 @@ from typing import Any, Mapping
 
 import torch
 import yaml
+from accelerate import Accelerator
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
 
 
@@ -51,6 +52,7 @@ def load_isp_config(path: Path) -> dict[str, Any]:
 
 
 def main() -> None:
+    accelerator = Accelerator()
     default_cfg = os.environ.get("ISP_CONFIG", "/app/config/isp.yaml")
     p = argparse.ArgumentParser(description="Run Geneformer in-silico perturbation + stats.")
     p.add_argument(
@@ -201,44 +203,49 @@ def main() -> None:
     print("Starting perturbation...")
     isp.perturb_data(model_dir, dataset_name, isp_dir, output_prefix)
 
-    print("Perturbation complete. Generating stats...")
-    ispstats = InSilicoPerturberStats(
-        mode=stats_mode,
-        genes_perturbed="all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list,
-        combos=combos,
-        anchor_gene=anchor_gene,
-        cell_states_to_model={
-            "state_key": state_key,
-            "start_state": start_state,
-            "goal_state": end_state,
-            "alt_states": alt_state,
-        },
-    )
+    # Wait for all processes to finish perturbing
+    accelerator.wait_for_everyone()
 
-    stats_dir = _ensure_dir_suffix(str(stats_out))
-    os.makedirs(stats_dir, exist_ok=True)
-
-    ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
-    print("Stats generation complete. Check the parquet file.")
-
-    analysis_cfg = cfg.get("analysis") or {}
-    run_figures = analysis_cfg.get("enabled", True) and not args.skip_analysis
-    if run_figures:
-        from isp_analysis import run_isp_figure_analysis
-
-        parquet_file = os.path.join(stats_dir.rstrip(os.sep), f"{output_prefix}.parquet")
-        stats_parent = Path(stats_dir.rstrip(os.sep))
-        figures_dir = stats_parent.parent / "figures"
-        figures_dir.mkdir(parents=True, exist_ok=True)
-        print("Running ISP figure analysis (isp_analysis.py)…")
-        run_isp_figure_analysis(
-            parquet_file,
-            figures_dir,
-            stats_parent,
-            label_start=start_state,
-            label_end=end_state,
+    # Only run analysis on the main process to avoid race conditions
+    if accelerator.is_main_process:
+        print("Perturbation complete. Generating stats...")
+        ispstats = InSilicoPerturberStats(
+            mode=stats_mode,
+            genes_perturbed="all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list,
+            combos=combos,
+            anchor_gene=anchor_gene,
+            cell_states_to_model={
+                "state_key": state_key,
+                "start_state": start_state,
+                "goal_state": end_state,
+                "alt_states": alt_state,
+            },
         )
-        print(f"Figures directory: {figures_dir}")
+
+        stats_dir = _ensure_dir_suffix(str(stats_out))
+        os.makedirs(stats_dir, exist_ok=True)
+
+        ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
+        print("Stats generation complete. Check the parquet file.")
+
+        analysis_cfg = cfg.get("analysis") or {}
+        run_figures = analysis_cfg.get("enabled", True) and not args.skip_analysis
+        if run_figures:
+            from isp_analysis import run_isp_figure_analysis
+
+            parquet_file = os.path.join(stats_dir.rstrip(os.sep), f"{output_prefix}.parquet")
+            stats_parent = Path(stats_dir.rstrip(os.sep))
+            figures_dir = stats_parent.parent / "figures"
+            figures_dir.mkdir(parents=True, exist_ok=True)
+            print("Running ISP figure analysis (isp_analysis.py)...")
+            run_isp_figure_analysis(
+                parquet_file,
+                figures_dir,
+                stats_parent,
+                label_start=start_state,
+                label_end=end_state,
+            )
+            print(f"Figures directory: {figures_dir}")
 
 
 if __name__ == "__main__":

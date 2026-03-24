@@ -195,7 +195,7 @@ def isp_stats_to_goal_state(cos_sims_df, dict_list, cell_states_to_model, genes_
         if alt_end_state_exists == False:
             names.remove("Shift_to_alt_end")
             names.remove("Alt_end_vs_random_pval")
-        cos_sims_full_df = pd.DataFrame(columns=names)
+        rows = []
 
         for i in trange(cos_sims_df.shape[0]):
             token = cos_sims_df["Gene"][i]
@@ -232,8 +232,9 @@ def isp_stats_to_goal_state(cos_sims_df, dict_list, cell_states_to_model, genes_
                           pval_goal_end,
                           pval_alt_end]
 
-            cos_sims_df_i = pd.DataFrame(dict(zip(names,data_i)),index=[i])
-            cos_sims_full_df = pd.concat([cos_sims_full_df,cos_sims_df_i])
+            rows.append(dict(zip(names, data_i)))
+
+        cos_sims_full_df = pd.DataFrame(rows, columns=names)
 
         cos_sims_full_df["Goal_end_FDR"] = get_fdr(list(cos_sims_full_df["Goal_end_vs_random_pval"]))
         if alt_end_state_exists == True:
@@ -315,7 +316,6 @@ def isp_stats_mixture_model(cos_sims_df, dict_list, combos, anchor_token):
     names += ["Impact_component",
               "Impact_component_percent"]
 
-    cos_sims_full_df = pd.DataFrame(columns=names)
     avg_values = []
     gene_names = []
     
@@ -347,7 +347,8 @@ def isp_stats_mixture_model(cos_sims_df, dict_list, combos, anchor_token):
     # fit Gaussian mixture model to dataset of mean for each gene
     avg_values_to_fit = np.array(avg_values).reshape(-1, 1)
     gm = GaussianMixture(n_components=2, random_state=0).fit(avg_values_to_fit)
-            
+
+    rows = []
     for i in trange(cos_sims_df.shape[0]):
         token = cos_sims_df["Gene"][i]
         name = cos_sims_df["Gene_name"][i]
@@ -394,10 +395,11 @@ def isp_stats_mixture_model(cos_sims_df, dict_list, combos, anchor_token):
                        mean_combo_minus_sum]
         data_i += [impact_component,
                    impact_component_percent]
-        
-        cos_sims_df_i = pd.DataFrame(dict(zip(names,data_i)),index=[i])
-        cos_sims_full_df = pd.concat([cos_sims_full_df,cos_sims_df_i])
-        
+
+        rows.append(dict(zip(names, data_i)))
+
+    cos_sims_full_df = pd.DataFrame(rows, columns=names)
+
     # quantify number of detections of each gene
     cos_sims_full_df["N_Detections"] = [n_detections(i, 
                                                      dict_list, 

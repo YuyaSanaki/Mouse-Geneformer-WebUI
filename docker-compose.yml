@@ -40,7 +40,7 @@ services:
       - accelerate
       - launch
       - --num_processes
-      - "1"
+      - "${ISP_NUM_GPUS:-1}"
       - /app/run_isp.py
       - --config
       - /app/config/isp.yaml
