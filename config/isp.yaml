@@ -12,13 +12,16 @@ paths:
 
 perturbation:
   type: delete # delete | overexpress | inhibit | activate
-  organ_data: Cop1KO
+    # "delete": delete gene from rank value encoding
+    # "overexpress": move gene to front of rank value encoding
+    # "inhibit": move gene to lower quartile of rank value encoding
+    # "activate": move gene to higher quartile of rank value encoding
+  organ_data: Cop1KO # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
   start_state: Cop1_WT
   end_state: Cop1_KO
-  alt_states: []
-  # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
+  alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
   genes_to_perturb: []
 
 model:
@@ -34,7 +37,7 @@ isp:
   anchor_gene: null
   perturb_rank_shift: null
   perturb_rank_direct_shift: null
-  filter_data: null # e.g. { "cell_type": ["cardiomyocyte"] }
+  filter_data: null # if you want to ristrict cell tyep to perturb, specify like { "cell_type": ["cardiomyocyte"] }
 
 stats:
   mode: goal_state_shift # goal_state_shift | vs_null | mixture_model | aggregate_data

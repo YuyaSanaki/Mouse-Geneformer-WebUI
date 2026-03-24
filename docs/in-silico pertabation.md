@@ -6,14 +6,16 @@ This guide describes the **end-to-end workflow** to run Geneformer ISP on a **ne
 
 ## 1. Define the question
 
-- **Goal-state shift** (same idea as Cop1 WT → KO in the tutorial) needs **at least two distinct labels** for cells, stored in **one metadata column** (e.g. control vs knockdown).
-- Decide **which cells** belong in the analysis (e.g. skeletal muscle only). You can enforce that **before tokenization** (subset cells) or **after**, using `isp.filter_data` in `isp.yaml` if those columns exist in the tokenized dataset.
+- **Goal-state shift** evaluates how much in silico perturbation of a gene in start-labeled cells (e.g. wild type) shifts the model’s representation toward end-labeled cells (e.g. knockout).
+- **What it measures:** changes in embedding similarity (based on ranked gene expression) in the model’s embedding space — not raw transcript counts or per-gene fold-change (i.e., whether the perturbed WT cell cluster moves towards the KO cell cluster or away from it).
+- **Data requirements:** the tokenized `.dataset` generated from real scRNA-seq of both baseline and target states; label strings must exactly match `perturbation.start_state` and `perturbation.end_state` in `isp.yaml`.
+- Decide **which cell types** proceed to the analysis (e.g. skeletal muscle only). You can enforce that **before tokenization** (subset cells) or **after**, using `isp.filter_data` in `isp.yaml` if those columns exist in the tokenized dataset.
 
 ---
 
 ## 2. Obtain expression data
 
-You need **raw counts** (single-cell or pseudo-bulk) plus **per-cell metadata**. ISP never reads this raw layer directly; you first run **`TranscriptomeTokenizer`** in [`geneformer/tokenizer.py`](../geneformer/tokenizer.py), which accepts **only** the formats below.
+You need **raw counts** (single-cell or single-nuc, DO NOT normalize the count) plus **per-cell metadata**. Minimum 500 cells in the cell type of interest; a greater cell number is better. You need both start-state and end-state (e.g. WT and KO) sequence data.
 
 ### Acceptable file formats (for `tokenize_data`)
 

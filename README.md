@@ -21,8 +21,10 @@ scp /path/to/file yuyasanaki@192.168.200.102:/Users/yuyasanaki/desktop
 
 
 
-# In-silico perturbation (docker compose service)
+# in-silico perturbation (docker compose service)
 For the details, see [**docs/in-silico pertabation.md**](docs/in-silico%20pertabation.md) (end-to-end workflow for new biology, tokenized `.dataset`, and config).
+
+in-silico perturbation (ISP) is predicting gene expression change in a cell type when a gene knockdown. The predicted result is ranked gene expression, not counts or fold-change per genes, so that it will show you a (rough) transcriptional landscape change regulated by the gene knocked out.
 
 1. Settings **`config/isp.yaml`** (paths, perturbation, model, `runtime.forward_batch_size`, `runtime.nproc`, etc.). Edit that file on the host; it appears as `/app/config/isp.yaml` in the container.
 
