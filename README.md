@@ -1,8 +1,18 @@
 
 # Premise
-Development is ongoing on DGX spark (ARM64).
-Supposed to work on Inte;/AMD/ARM CPU with NVIDIA GPU.
-All services will be run by docker compose. Not jupyter (major chang from original mouse-geneformer).
+All services run via Docker Compose (diverges from the original Mouse-Geneformer repo which used plain Jupyter).
+
+## Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| **GPU** | NVIDIA GPU (any) with drivers installed |
+| **Container runtime** | Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (`nvidia-container-toolkit`) |
+| **CPU / OS** | Linux on **x86\_64** (Intel or AMD) or **aarch64 / ARM64** (e.g. DGX Spark, Grace Hopper) |
+
+Code modification and primary testing is on a **DGX Spark (aarch64)**. x86\_64 NVIDIA hosts (desktop RTX, server A/H-series, etc.) are also supported — the image arch is chosen automatically by Docker.
+
+**Not supported:** CPU-only, non-NVIDIA GPUs (AMD ROCm, Intel Arc), or macOS GPU.
 
 
 # Install
