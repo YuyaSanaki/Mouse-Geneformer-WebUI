@@ -2,6 +2,9 @@
 # Premise
 All services run via Docker Compose (diverges from the original Mouse-Geneformer repo which used plain Jupyter).
 
+gemini --resume 76282c30-8ad3-4fdf-a65c-dcd411190261   
+
+
 ## Requirements
 
 | Component | Requirement |

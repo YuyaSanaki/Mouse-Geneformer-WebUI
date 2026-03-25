@@ -119,7 +119,7 @@ class TranscriptomeTokenizer:
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
-
+        self.gene_median_file_path_dict = {}
         self.start_reading_file_num = 0
 
         # total cell nums
@@ -300,10 +300,12 @@ class TranscriptomeTokenizer:
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys() 
             }
         
-        loom_file_median = self.gene_median_file_path_dict[str(loom_file_path)]
-        print(f"読み込んだloom fileのmedian file: {loom_file_median}")
-        with open(loom_file_median, "rb") as f:
-            self.gene_median_dict = pickle.load(f)
+        # Use existing gene_median_dict if no file-specific dict is provided
+        if str(loom_file_path) in self.gene_median_file_path_dict:
+            loom_file_median = self.gene_median_file_path_dict[str(loom_file_path)]
+            print(f"読み込んだloom fileのmedian file: {loom_file_median}")
+            with open(loom_file_median, "rb") as f:
+                self.gene_median_dict = pickle.load(f)
         
         # gene keys for full vocabulary
         self.gene_keys = list(self.gene_median_dict.keys())
@@ -313,16 +315,19 @@ class TranscriptomeTokenizer:
 
         with lp.connect(str(loom_file_path)) as data:
             # define coordinates of detected protein-coding or miRNA genes and vector of their normalization factors
+            # Geneformer expects 'ensembl_id' as a row attribute
+            row_attr_key = "ensembl_id" if "ensembl_id" in data.ra.keys() else "row_attrs"
+            
             coding_miRNA_loc = np.where(
-                [self.genelist_dict.get(i, False) for i in data.ra["row_attrs"]]
+                [self.genelist_dict.get(i, False) for i in data.ra[row_attr_key]]
             )[0]
             norm_factor_vector = np.array(
                 [
                     self.gene_median_dict[i]
-                    for i in data.ra["row_attrs"][coding_miRNA_loc]
+                    for i in data.ra[row_attr_key][coding_miRNA_loc]
                 ]
             )
-            coding_miRNA_ids = data.ra["row_attrs"][coding_miRNA_loc]
+            coding_miRNA_ids = data.ra[row_attr_key][coding_miRNA_loc]
             coding_miRNA_tokens = np.array(
                 [self.gene_token_dict[i] for i in coding_miRNA_ids]
             )

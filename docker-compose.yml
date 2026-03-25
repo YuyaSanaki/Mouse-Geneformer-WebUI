@@ -50,3 +50,13 @@ services:
       - /app/run_isp.py
       - --config
       - /app/config/isp.yaml
+
+  # Tokenization pipeline: docker compose run --rm tokenize
+  tokenize:
+    <<: *geneformer-base
+    container_name: mouse_geneformer_tokenize
+    environment:
+      - TOKENIZE_CONFIG=/app/config/tokenize.yaml
+    command:
+      - python3
+      - /app/execute_tokenizer_pipeline.py

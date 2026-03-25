@@ -1,0 +1,32 @@
+# =============================================================================
+# Tokenization Pipeline Configuration — config/tokenize.yaml
+# =============================================================================
+
+data:
+  # "single-cell" (barcodes/features/matrix) or "loom"
+  input_type: "single-cell"
+
+  # Directory containing sample subfolders (for single-cell) or .loom files
+  input_dir: "/app/data/AD/"
+
+  # Intermediate directory for .loom files if starting from single-cell
+  loom_temp_dir: "/app/data/AD/loom_files/"
+  
+  # Final tokenized dataset output
+  output_dir: "/app/data/AD/tokenized_dataset/"
+  output_prefix: "AD_data"
+
+tokenizer:
+  nproc: 16
+  # Map metadata from loom column attributes to dataset columns
+  custom_attr_name_dict:
+    time: "time"
+    genotype: "genotype"
+    replicate: "replicate"
+    disease: "disease"
+    sample_id: "sample_id"
+
+# Settings for single-cell (barcodes/features/matrix) format
+single_cell_settings:
+  # If true, try to extract metadata (time-genotype-replicate) from folder names
+  extract_metadata_from_path: true
