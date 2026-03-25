@@ -5,7 +5,7 @@
 
 paths:
   # Tokenized HuggingFace dataset directory (.dataset)
-  dataset: /app/data/Mouse-Genecorpus-20M/eval_dataset/in_silico_perturbation/Cop1KO_isp_mouse_tokenize_dataset_v-n1.dataset
+  dataset: /app/data/AD/tokenized_dataset/AD_data_0.dataset
   geneformer_model: /app/models/mouse-Geneformer/
   # Per run: {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date = today, or --output-date / ISP_OUTPUT_DATE)
   output_root: /app/output
@@ -16,11 +16,11 @@ perturbation:
     # "overexpress": move gene to front of rank value encoding
     # "inhibit": move gene to lower quartile of rank value encoding
     # "activate": move gene to higher quartile of rank value encoding
-  organ_data: Cop1KO # output filename prefix
+  organ_data: AD # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
-  start_state: Cop1_WT
-  end_state: Cop1_KO
+  start_state: WT
+  end_state: AD
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
   genes_to_perturb: []
 
