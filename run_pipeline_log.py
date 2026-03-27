@@ -204,7 +204,7 @@ def format_isp_run_banner(cfg: dict[str, Any], extras: dict[str, Any]) -> str:
         f"  geneformer_model:   {paths.get('geneformer_model')}",
         f"  output_root:        {paths.get('output_root')}",
         f"  output date:        {extras.get('date_used', '')}",
-        f"  output_subdir:      {extras.get('output_subdir') or '(none)'}",
+        f"  run folder:         {extras.get('run_folder', '')}",
         f"  isp_results:        {extras.get('isp_out', '')}",
         f"  ispstats_results:   {extras.get('stats_out', '')}",
         f"  output_prefix:      {extras.get('output_prefix', '')}",

@@ -3,9 +3,10 @@ In-silico perturbation driver (notebook logic as a script).
 
 Configuration: YAML file (default /app/config/isp.yaml). Override path with --config or ISP_CONFIG.
 CLI --forward-batch-size / --nproc override the YAML runtime section when passed.
-Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/[output_subdir/]isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
-Optional output_subdir: paths.output_subdir, ISP_OUTPUT_SUBDIR, or --output-subdir — a single path segment under the date folder so multiple same-day runs do not overwrite each other.
-Also writes {output_root}/{YYYYMMDD}/[output_subdir/]isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
+Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/[run_folder/]isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
+By default (paths.output_time_subdir true) run_folder is run_<UTC HHMMSS>_<microseconds>Z from process start, so same-day runs do not collide; disabled with paths.output_time_subdir false, ISP_OUTPUT_TIME_SUBDIR=0, or --no-output-time-subdir (then outputs sit directly under the date folder).
+Explicit output_subdir (paths.output_subdir, ISP_OUTPUT_SUBDIR, --output-subdir) overrides the time folder with a fixed name.
+Also writes {output_root}/{YYYYMMDD}/[run_folder/]isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
 Optional ISP_FINGERPRINT_INPUTS=1: SHA-256 content fingerprints of paths.dataset and paths.geneformer_model are printed and stored in isp_run_metadata.yaml (can be slow for large trees).
 
 Speed on DGX / large GPUs:
@@ -61,6 +62,77 @@ def _resolve_output_subdir(
             "Set paths.output_subdir, ISP_OUTPUT_SUBDIR, or --output-subdir (e.g. run1, batch_a)."
         )
     return raw
+
+
+def _want_auto_time_subdir(
+    paths_cfg: Mapping[str, Any] | None,
+    env_raw: str | None,
+    cli_disable: bool,
+) -> bool:
+    """Default True: create run_<UTC time> under the date folder unless disabled."""
+    if cli_disable:
+        return False
+    s = (env_raw or "").strip().lower()
+    if s in ("0", "false", "no", "off"):
+        return False
+    if s in ("1", "true", "yes", "on"):
+        return True
+    v = _deep_get(paths_cfg, "output_time_subdir", default=True)
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
+def _utc_run_folder_name(now_utc: datetime) -> str:
+    """One path segment: UTC start time + microseconds to avoid same-second clashes."""
+    return f"run_{now_utc.strftime('%H%M%S')}_{now_utc.microsecond:06d}Z"
+
+
+def _broadcast_run_folder_from_main(accelerator: Any, value_on_main: str) -> str:
+    """
+    Replicate the run folder name from the global main process on all ranks.
+    Older Accelerate versions omit broadcast_object_list; then we try torch.distributed.
+    """
+    n_raw = getattr(accelerator, "num_processes", 1)
+    try:
+        n = int(n_raw) if n_raw is not None else 1
+    except (TypeError, ValueError):
+        n = 1
+    if n <= 1:
+        return value_on_main
+
+    bucket: list[str] = [value_on_main if accelerator.is_main_process else ""]
+    acc_bc = getattr(accelerator, "broadcast_object_list", None)
+    if callable(acc_bc):
+        acc_bc(bucket, from_process=0)
+        out = bucket[0]
+        if isinstance(out, str) and out:
+            return out
+        raise RuntimeError("broadcast_object_list did not return a run folder name on all ranks.")
+
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+            obj_list: list[Any]
+            if dist.get_rank() == 0:
+                obj_list = [value_on_main]
+            else:
+                obj_list = [None]
+            dist.broadcast_object_list(obj_list, src=0)
+            got = obj_list[0]
+            if isinstance(got, str) and got:
+                return got
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "Multi-process ISP with paths.output_time_subdir needs a way to broadcast the run folder "
+        "name across ranks. This Accelerate build has no broadcast_object_list, and "
+        "torch.distributed is not initialized. Options: upgrade `accelerate`, or set "
+        "paths.output_time_subdir: false / ISP_OUTPUT_TIME_SUBDIR=0 / --no-output-time-subdir, "
+        "or set a fixed ISP_OUTPUT_SUBDIR."
+    )
 
 
 def load_isp_config(path: Path) -> dict[str, Any]:
@@ -178,6 +250,11 @@ def main() -> None:
         help="Optional subfolder under output_root/DATE for this run (default: paths.output_subdir or ISP_OUTPUT_SUBDIR).",
     )
     p.add_argument(
+        "--no-output-time-subdir",
+        action="store_true",
+        help="Write isp_results directly under output_root/DATE (no default run_<UTC time> folder).",
+    )
+    p.add_argument(
         "--skip-analysis",
         action="store_true",
         help="Skip isp_analysis.py figures/tables after stats.",
@@ -212,18 +289,31 @@ def main() -> None:
                 "output date must be YYYYMMDD (8 digits). "
                 "Set --output-date, ISP_OUTPUT_DATE, or use default today."
             )
-        output_subdir = _resolve_output_subdir(
+        explicit_subdir = _resolve_output_subdir(
             args.output_subdir,
             os.environ.get("ISP_OUTPUT_SUBDIR"),
             paths,
         )
+        use_auto_time = _want_auto_time_subdir(
+            paths,
+            os.environ.get("ISP_OUTPUT_TIME_SUBDIR"),
+            args.no_output_time_subdir,
+        )
+        run_folder = ""
+        if explicit_subdir:
+            run_folder = explicit_subdir
+        elif use_auto_time:
+            proposed = ""
+            if accelerator.is_main_process:
+                proposed = _utc_run_folder_name(datetime.now(timezone.utc))
+            run_folder = _broadcast_run_folder_from_main(accelerator, proposed)
         run_root = Path(output_root) / date_used
-        if output_subdir:
-            run_root = run_root / output_subdir
+        if run_folder:
+            run_root = run_root / run_folder
         isp_out = os.path.join(str(run_root), "isp_results")
         stats_out = os.path.join(str(run_root), "ispstats_results")
     else:
-        output_subdir = None
+        run_folder = ""
         isp_out = paths.get("isp_results_dir")
         stats_out = paths.get("ispstats_results_dir")
     for key, val in (
@@ -310,6 +400,12 @@ def main() -> None:
                     flush=True,
                 )
 
+        if not output_root:
+            banner_run_folder = "(legacy paths)"
+        elif run_folder:
+            banner_run_folder = run_folder
+        else:
+            banner_run_folder = "(flat under date)"
         banner = format_isp_run_banner(
             cfg,
             extras={
@@ -321,7 +417,7 @@ def main() -> None:
                 "forward_batch_size": forward_batch_size,
                 "nproc": nproc,
                 "skip_analysis": args.skip_analysis,
-                "output_subdir": output_subdir or "",
+                "run_folder": banner_run_folder,
             },
         )
         print(banner, end="")
