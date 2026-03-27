@@ -4,6 +4,7 @@ In-silico perturbation driver (notebook logic as a script).
 Configuration: YAML file (default /app/config/isp.yaml). Override path with --config or ISP_CONFIG.
 CLI --forward-batch-size / --nproc override the YAML runtime section when passed.
 Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
+Also writes {output_root}/{YYYYMMDD}/isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
 
 Speed on DGX / large GPUs:
   - Imports apply TF32-friendly matmul settings (see in_silico_perturber._configure_cuda_performance).
@@ -26,6 +27,8 @@ import torch
 import yaml
 from accelerate import Accelerator
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
+
+from run_pipeline_log import format_isp_run_banner, install_rotating_stdio_tee
 
 
 def _deep_get(m: Mapping[str, Any] | None, *keys: str, default: Any = None) -> Any:
@@ -212,6 +215,39 @@ def main() -> None:
     st = cfg.get("stats") or {}
     stats_mode = st.get("mode", "goal_state_shift")
 
+    start_state_fn = start_state.replace(" ", "-")
+    end_state_fn = end_state.replace(" ", "-")
+    output_prefix = "output_in-silico_SE{}_OR{}_ST{}_EN{}".format(
+        select_perturb_type, organ_data, start_state_fn, end_state_fn
+    )
+
+    isp_dir = _ensure_dir_suffix(str(isp_out))
+    os.makedirs(isp_dir, exist_ok=True)
+
+    if output_root and date_used:
+        log_dir = Path(output_root) / date_used
+    else:
+        log_dir = Path(isp_out.rstrip(os.sep)).parent
+    log_path = log_dir / "isp_run.log"
+
+    if accelerator.is_main_process:
+        install_rotating_stdio_tee(log_path, env_prefix="ISP")
+        banner = format_isp_run_banner(
+            cfg,
+            extras={
+                "config_path": str(args.config.resolve()),
+                "date_used": date_used or "",
+                "isp_out": isp_out,
+                "stats_out": stats_out,
+                "output_prefix": output_prefix,
+                "forward_batch_size": forward_batch_size,
+                "nproc": nproc,
+                "skip_analysis": args.skip_analysis,
+            },
+        )
+        print(banner, end="")
+        print(f"  run log (rotating): {log_path}")
+
     print("Checking CUDA...", torch.cuda.is_available())
     if torch.cuda.is_available():
         print("Device:", torch.cuda.get_device_name(0))
@@ -240,14 +276,6 @@ def main() -> None:
         nproc=nproc,
     )
 
-    start_state_fn = start_state.replace(" ", "-")
-    end_state_fn = end_state.replace(" ", "-")
-    output_prefix = "output_in-silico_SE{}_OR{}_ST{}_EN{}".format(
-        select_perturb_type, organ_data, start_state_fn, end_state_fn
-    )
-
-    isp_dir = _ensure_dir_suffix(str(isp_out))
-    os.makedirs(isp_dir, exist_ok=True)
     if output_root and date_used:
         print(f"Output root: {output_root}  (date {date_used})")
         print(f"  → ISP results: {isp_out}")

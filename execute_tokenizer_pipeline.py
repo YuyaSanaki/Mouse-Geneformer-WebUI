@@ -13,6 +13,8 @@ from typing import Any
 sys.path.append(os.getcwd())
 from geneformer import TranscriptomeTokenizer
 
+from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_tee
+
 
 def _write_tokenize_provenance(
     output_dir: Path,
@@ -111,14 +113,30 @@ def main():
     data_cfg = config['data']
     tokenizer_cfg = config['tokenizer']
     tokenizer_nproc = int(tokenizer_cfg.get('nproc', 1))
-    
+    single_cell_settings = config.get('single_cell_settings', {}) or {}
+
+    out_dir = Path(data_cfg['output_dir'])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "tokenize_run.log"
+    install_rotating_stdio_tee(log_path, env_prefix="TOKENIZE")
+    print(
+        format_tokenize_run_banner(
+            config_path.resolve(),
+            data_cfg,
+            tokenizer_cfg,
+            single_cell_settings,
+        ),
+        end="",
+    )
+    print(f"  run log (rotating): {log_path}")
+
     # Step 1: Handle Conversion if needed
     if data_cfg['input_type'] == "single-cell":
         print("Input type is single-cell. Converting to loom first...")
         process_single_cell_to_loom(
             data_cfg['input_dir'], 
             data_cfg['loom_temp_dir'], 
-            config.get('single_cell_settings', {})
+            single_cell_settings,
         )
         tokenizer_input_dir = data_cfg['loom_temp_dir']
     else:
@@ -126,8 +144,6 @@ def main():
         tokenizer_input_dir = data_cfg['input_dir']
 
     # Step 2: Tokenize
-    out_dir = Path(data_cfg['output_dir'])
-    out_dir.mkdir(parents=True, exist_ok=True)
     _write_tokenize_provenance(out_dir, config_path, tokenizer_nproc, data_cfg)
     print(
         f"Provenance: {out_dir / 'tokenize_config_used.yaml'} "

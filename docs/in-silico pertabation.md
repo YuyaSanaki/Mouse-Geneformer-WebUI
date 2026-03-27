@@ -140,6 +140,7 @@ Alternative with Jupyter container already up:
 - **Intermediate / perturbation outputs:** `{paths.output_root}/{YYYYMMDD}/isp_results` (unless using legacy path keys).
 - **Stats (e.g. parquet):** `{paths.output_root}/{YYYYMMDD}/ispstats_results`.
 - **Figures + table exports:** after stats, `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) (same logic as [`isp_analysis.ipynb`](../isp_analysis.ipynb)): PNGs under **`{paths.output_root}/{YYYYMMDD}/figures/`** (e.g. `shift_distribution.png`, `volcano_plot.png`, `top_genes_barplot.png`, `waterfall_plot.png`); CSV summaries stay next to the parquet in `ispstats_results`. Disable with `analysis.enabled: false` in `isp.yaml` or `--skip-analysis`.
+- **Run log + provenance (same date folder):** `isp_run.log` (rotating text log of stdout/stderr from `run_isp.py` on the **main** process only), plus `isp_config_used.yaml` and `isp_run_metadata.yaml`. Tokenization writes analogous files under `data.output_dir` (`tokenize_run.log`, `tokenize_config_used.yaml`, `tokenize_run_metadata.yaml`). See **[README.md § Run provenance and logs](../README.md#run-provenance-config-summary-and-rotating-logs-isp)** for behavior, rotation, and env vars (`ISP_LOG_*`, `TOKENIZE_LOG_*`, disable flags).
 
 ---
 
