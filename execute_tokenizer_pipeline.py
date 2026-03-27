@@ -9,56 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Add current directory to path so geneformer can be imported
+# Add current directory to path so geneformer and provenance can be imported
 sys.path.append(os.getcwd())
 from geneformer import TranscriptomeTokenizer
-
 from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_tee
-
-
-def _write_tokenize_provenance(
-    output_dir: Path,
-    config_path: Path,
-    tokenizer_nproc: int,
-    data_cfg: dict[str, Any],
-) -> None:
-    """Copy tokenize YAML and record metadata next to tokenized outputs (reproducibility)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(config_path, output_dir / "tokenize_config_used.yaml")
-
-    meta: dict[str, Any] = {
-        "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "config_source_path": str(config_path.resolve()),
-        "tokenizer": {"nproc": tokenizer_nproc},
-        "data": {
-            "input_type": data_cfg.get("input_type"),
-            "input_dir": data_cfg.get("input_dir"),
-            "loom_temp_dir": data_cfg.get("loom_temp_dir"),
-            "output_dir": data_cfg.get("output_dir"),
-            "output_prefix": data_cfg.get("output_prefix"),
-        },
-    }
-    git_sha = os.environ.get("TOKENIZE_GIT_COMMIT", "").strip()
-    if not git_sha:
-        try:
-            rev = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=Path(__file__).resolve().parent,
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            if rev.returncode == 0:
-                git_sha = rev.stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    if git_sha:
-        meta["git_commit"] = git_sha
-
-    with open(output_dir / "tokenize_run_metadata.yaml", "w", encoding="utf-8") as f:
-        yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
-
+from run_provenance import write_service_provenance, update_service_provenance
 
 def process_single_cell_to_loom(input_dir, loom_temp_dir, settings):
     """Convert subdirectories of (barcodes/features/matrix) to .loom files."""
@@ -143,13 +98,46 @@ def main():
         print("Input type is loom. Skipping conversion.")
         tokenizer_input_dir = data_cfg['input_dir']
 
-    # Step 2: Tokenize
-    _write_tokenize_provenance(out_dir, config_path, tokenizer_nproc, data_cfg)
-    print(
-        f"Provenance: {out_dir / 'tokenize_config_used.yaml'} "
-        f"+ tokenize_run_metadata.yaml"
-    )
+    # Step 2: Provenance Tracking & Fingerprinting
+    input_paths = {
+        "input_data": data_cfg['input_dir']
+    }
+    
+    # Read provenance settings from config with sensible defaults
+    prov_cfg = config.get('provenance') or {}
+    enable_fp = prov_cfg.get('enable_input_fingerprint', False)
+    # Environment variable still takes precedence if set
+    if os.environ.get("ENABLE_INPUT_FINGERPRINT"):
+        enable_fp = os.environ.get("ENABLE_INPUT_FINGERPRINT").lower() in ("1", "true", "yes")
+    
+    is_fast = prov_cfg.get('fingerprint_fast', True)
+    if os.environ.get("FINGERPRINT_FAST"):
+        is_fast = os.environ.get("FINGERPRINT_FAST").lower() in ("1", "true", "yes")
+    
+    # Temporarily set environment variable for run_provenance utility if enabled by config
+    if enable_fp:
+        os.environ["ENABLE_INPUT_FINGERPRINT"] = "true"
 
+    write_service_provenance(
+        run_root=out_dir,
+        config_path=config_path,
+        extra_meta={
+            "service": "tokenize",
+            "tokenizer": {"nproc": tokenizer_nproc},
+            "data": {
+                "input_type": data_cfg.get("input_type"),
+                "input_dir": data_cfg.get("input_dir"),
+                "loom_temp_dir": data_cfg.get("loom_temp_dir"),
+                "output_dir": data_cfg.get("output_dir"),
+                "output_prefix": data_cfg.get("output_prefix"),
+            },
+        },
+        input_paths=input_paths,
+        fast_fingerprint=is_fast
+    )
+    print(f"  Provenance saved in: {out_dir}")
+
+    # Step 3: Tokenize
     print(f"Initializing Tokenizer with nproc={tokenizer_nproc}...")
     
     tk = TranscriptomeTokenizer(
@@ -158,12 +146,23 @@ def main():
     )
     
     print(f"Starting Tokenization of files in {tokenizer_input_dir}...")
-    tk.tokenize_data(
-        data_directory=tokenizer_input_dir,
-        output_directory=data_cfg['output_dir'],
-        output_prefix=data_cfg['output_prefix']
-    )
-    print("Pipeline Finished.")
+    pipeline_ok = False
+    try:
+        tk.tokenize_data(
+            data_directory=tokenizer_input_dir,
+            output_directory=data_cfg['output_dir'],
+            output_prefix=data_cfg['output_prefix']
+        )
+        pipeline_ok = True
+        print("Pipeline Finished.")
+    finally:
+        update_service_provenance(
+            out_dir,
+            {
+                "finished_at_utc": datetime.now(timezone.utc).isoformat(),
+                "run_status": "completed" if pipeline_ok else "failed",
+            },
+        )
 
 if __name__ == "__main__":
     main()

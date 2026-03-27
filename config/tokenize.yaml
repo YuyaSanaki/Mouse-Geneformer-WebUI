@@ -30,3 +30,10 @@ tokenizer:
 single_cell_settings:
   # If true, try to extract metadata (time-genotype-replicate) from folder names
   extract_metadata_from_path: true
+
+# Provenance and reproducibility settings
+provenance:
+  # Whether to compute content fingerprints of input data
+  enable_input_fingerprint: true
+  # If true, use fast metadata-based fingerprinting for large datasets
+  fingerprint_fast: true
