@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -49,6 +51,57 @@ def load_isp_config(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"ISP config must be a mapping at root: {path}")
     return data
+
+
+def _write_run_provenance(
+    run_root: Path,
+    config_path: Path,
+    forward_batch_size: int,
+    nproc: int,
+    cli_forward_batch_size: int | None,
+    cli_nproc: int | None,
+) -> None:
+    """Copy the ISP YAML and record metadata next to dated outputs (reproducibility)."""
+    run_root.mkdir(parents=True, exist_ok=True)
+    dest_cfg = run_root / "isp_config_used.yaml"
+    shutil.copy2(config_path, dest_cfg)
+
+    meta: dict[str, Any] = {
+        "started_at_utc": datetime.now(timezone.utc).isoformat(),
+        "config_source_path": str(config_path.resolve()),
+        "effective_runtime": {
+            "forward_batch_size": forward_batch_size,
+            "nproc": nproc,
+        },
+        "cli_overrides": {
+            k: v
+            for k, v in (
+                ("forward_batch_size", cli_forward_batch_size),
+                ("nproc", cli_nproc),
+            )
+            if v is not None
+        },
+    }
+    git_sha = os.environ.get("ISP_GIT_COMMIT", "").strip()
+    if not git_sha:
+        try:
+            rev = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parent,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if rev.returncode == 0:
+                git_sha = rev.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if git_sha:
+        meta["git_commit"] = git_sha
+
+    with open(run_root / "isp_run_metadata.yaml", "w", encoding="utf-8") as f:
+        yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
 
 
 def main() -> None:
@@ -199,6 +252,20 @@ def main() -> None:
         print(f"Output root: {output_root}  (date {date_used})")
         print(f"  → ISP results: {isp_out}")
         print(f"  → ISP stats:   {stats_out}")
+
+    if output_root and date_used and accelerator.is_main_process:
+        _write_run_provenance(
+            Path(output_root) / date_used,
+            args.config.resolve(),
+            forward_batch_size,
+            nproc,
+            args.forward_batch_size,
+            args.nproc,
+        )
+        print(
+            f"  → Provenance: {Path(output_root) / date_used / 'isp_config_used.yaml'} "
+            f"+ isp_run_metadata.yaml"
+        )
 
     print("Starting perturbation...")
     isp.perturb_data(model_dir, dataset_name, isp_dir, output_prefix)
