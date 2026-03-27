@@ -16,15 +16,35 @@ Code modification and primary testing is on a **DGX Spark (aarch64)**. x86\_64 N
 
 
 # Install
-clone rep
-cd ti the dir
-git lfs pull
-docker build
 
-MLM-re_token_dictionary_v1.pkl was missed from the repo. Download it from https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl
+1. **Clone the repository** and enter it:
+   ```bash
+   git clone <repository-url>
+   cd Mouse-Geneformer   # or your clone directory name
+   ```
 
-cd /home/yuya-sanaki/20260321Mouse-Geneformer/data/Mouse-Genecorpus-20M
-git lfs pull
+2. **Git LFS** (large files tracked by LFS):
+   ```bash
+   git lfs install
+   git lfs pull
+   ```
+
+3. **Build the Docker image** used by Jupyter, ISP, and tokenization (same image for all Compose services):
+   ```bash
+   docker compose build mouse-geneformer
+   ```
+   The first build can take a while (NGC PyTorch base + Python deps). Re-run this after `Dockerfile` or dependency changes.
+
+4. **Mouse-Genecorpus-20M data:** From the repo root, fetch LFS objects for the corpus checkout:
+   ```bash
+   cd data/Mouse-Genecorpus-20M
+   git lfs pull
+   cd ../..
+   ```
+
+5. **`MLM-re_token_dictionary_v1.pkl`:** This file is not always present after LFS pull. If it is missing, download it into `data/Mouse-Genecorpus-20M/` (same directory as the rest of that dataset layout):
+   - Direct link: [MLM-re_token_dictionary_v1.pkl](https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl)
+   - Example: `wget -O data/Mouse-Genecorpus-20M/MLM-re_token_dictionary_v1.pkl 'https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl'`
 
 # Push results to local mac
 scp /path/to/file yuyasanaki@192.168.200.102:/Users/yuyasanaki/desktop
@@ -42,17 +62,17 @@ docker compose run --rm isp
 ```
 This runs `accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
 
-Outputs go under `./output/<DATE>/isp_results`, `./output/<DATE>/ispstats_results`, and `./output/<DATE>/figures` when `paths.output_root` is set in `config/isp.yaml`. There will also be CSV tables next to the stats.
+Outputs go under `./output/<DATE>/run_<UTC time>/isp_results` (default), `./output/<DATE>/run_<UTC time>/ispstats_results`, and `./output/<DATE>/run_<UTC time>/figures` when `paths.output_root` and `paths.output_time_subdir` are true in `config/isp.yaml`. Use `paths.output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for the previous flat layout under `<DATE>/`. There will also be CSV tables next to the stats.
 
 ### Run provenance, config summary, and rotating logs (ISP)
 
 On the **main process** only, `run_isp.py` prints a multi-line **config summary** (dataset path, model path, perturbation type, start/end states, `isp.max_ncells`, effective `forward_batch_size` / `nproc`, etc.) and mirrors **stdout** and **stderr** into a **rotating** log file next to that day’s outputs:
 
-| Artifact | Location (with `paths.output_root` + date folder) | Role |
+| Artifact | Location (with `paths.output_root` + date + default run folder) | Role |
 |----------|-----------------------------------------------------|------|
-| `isp_config_used.yaml` | `./output/<DATE>/` | Copy of the ISP YAML used for this run |
-| `isp_run_metadata.yaml` | `./output/<DATE>/` | `started_at_utc` at launch; **`finished_at_utc`** and **`run_status`** (`completed` / `failed`) appended when the process exits the perturbation+stats+analysis block (main process only) |
-| `isp_run.log` (+ `.1`, `.2`, … on rotation) | `./output/<DATE>/` | Full console capture from Python onward (see note below) |
+| `isp_config_used.yaml` | `./output/<DATE>/run_<UTC>/` | Copy of the ISP YAML used for this run |
+| `isp_run_metadata.yaml` | `./output/<DATE>/run_<UTC>/` | `started_at_utc` at launch; **`finished_at_utc`** and **`run_status`** (`completed` / `failed`) appended when the process exits the perturbation+stats+analysis block (main process only) |
+| `isp_run.log` (+ `.1`, `.2`, … on rotation) | `./output/<DATE>/run_<UTC>/` | Full console capture from Python onward (see note below) |
 
 Optional environment variables:
 
@@ -62,6 +82,8 @@ Optional environment variables:
 | `ISP_LOG_BACKUP_COUNT` | How many rotated backups to keep (default `5`; `0` truncates instead of renaming) |
 | `ISP_DISABLE_RUN_LOG` | Set to `1` / `true` / `yes` to skip file logging (console unchanged) |
 | `ISP_GIT_COMMIT` | If set, written into `isp_run_metadata.yaml` when `git` is unavailable in the container |
+| `ISP_OUTPUT_TIME_SUBDIR` | `1` / `true` / `yes` (default follows YAML) or `0` / `false` / `no` to disable the automatic `run_<UTC time>` folder under each `<DATE>` |
+| `ISP_OUTPUT_SUBDIR` | Fixed folder name under `<DATE>` (overrides the time-based folder); must be a single path segment |
 
 **Note:** Messages printed by `accelerate launch` *before* `run_isp.py` starts (for example default-parameter hints) appear only in the terminal unless you redirect the Compose command at the shell level.
 
@@ -70,7 +92,7 @@ Optional environment variables:
 - **What is captured:** Everything written to **stdout** and **stderr** from the moment the tee is installed — including ordinary `print` output, HuggingFace `datasets` progress bars, and other libraries that write to the console. This is a **text** log (UTF-8, with replacement for invalid bytes).
 - **What is not captured:** Anything emitted **before** Python attaches the tee (notably `accelerate launch` startup lines). For a full shell transcript, run Compose with your own redirection (e.g. `docker compose run ... 2>&1 | tee full_terminal.log`).
 - **ISP and multiple GPUs:** Only the **main** process writes `isp_run.log`. Other ranks still print to the terminal but do not append to that file, so the log stays a single coherent stream without interleaved corruption.
-- **Append vs. rotate:** A new run on the **same** `<DATE>` **appends** to the existing `isp_run.log` / `tokenize_run.log`. When the file exceeds `*_LOG_MAX_BYTES`, it is rotated: the current file becomes `*.log.1`, the previous `.1` becomes `.2`, and so on, up to `*_LOG_BACKUP_COUNT`. With `*_LOG_BACKUP_COUNT=0`, the log is **truncated** when the size limit is hit instead of keeping numbered backups.
+- **Append vs. rotate:** A new run that reuses the **same** output directory (same `<DATE>` and same run folder, or flat layout under `<DATE>`) **appends** to the existing `isp_run.log` / `tokenize_run.log`. Default ISP layout uses a new `run_<UTC time>` folder per launch, so logs normally do not mix across runs. When the file exceeds `*_LOG_MAX_BYTES`, it is rotated: the current file becomes `*.log.1`, the previous `.1` becomes `.2`, and so on, up to `*_LOG_BACKUP_COUNT`. With `*_LOG_BACKUP_COUNT=0`, the log is **truncated** when the size limit is hit instead of keeping numbered backups.
 - **Provenance:** The YAML copies (`*_config_used.yaml`) and small metadata files (`*_run_metadata.yaml`) are the authoritative snapshot of **config**; the `.log` file is for **console history** and debugging long runs.
 
 Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline_log.py).
