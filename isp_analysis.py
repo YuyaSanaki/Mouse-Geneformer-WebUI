@@ -139,6 +139,37 @@ def run_isp_figure_analysis(
     fig.savefig(figures_dir / "top_genes_barplot.png", bbox_inches="tight")
     plt.close(fig)
 
+    # --- 3b. Top significant genes bar ---
+    df_sig = df[df["Sig"] == 1]
+    if not df_sig.empty:
+        n_sig_top = min(25, len(df_sig))
+        fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+        
+        # Top positive shifters among significant
+        top_sig_pos = df_sig.nlargest(n_sig_top, "Shift_to_goal_end")
+        axes[0].barh(range(len(top_sig_pos)), top_sig_pos["Shift_to_goal_end"].values, color="red", edgecolor="white")
+        axes[0].set_yticks(range(len(top_sig_pos)))
+        axes[0].set_yticklabels(top_sig_pos["Gene_name"].values, fontsize=9)
+        axes[0].invert_yaxis()
+        axes[0].set_xlabel("Shift to goal end")
+        axes[0].set_title(f"Top {len(top_sig_pos)} significant toward goal ({label_end})")
+        
+        # Top negative shifters among significant
+        top_sig_neg = df_sig.nsmallest(n_sig_top, "Shift_to_goal_end")
+        axes[1].barh(range(len(top_sig_neg)), top_sig_neg["Shift_to_goal_end"].values, color="red", edgecolor="white")
+        axes[1].set_yticks(range(len(top_sig_neg)))
+        axes[1].set_yticklabels(top_sig_neg["Gene_name"].values, fontsize=9)
+        axes[1].invert_yaxis()
+        axes[1].set_xlabel("Shift to goal end")
+        axes[1].set_title(f"Top {len(top_sig_neg)} significant away from goal ({label_end})")
+        
+        plt.suptitle("Significant genes only (FDR < 0.05)", fontsize=12)
+        plt.tight_layout()
+        fig.savefig(figures_dir / "top_significant_genes_barplot.png", bbox_inches="tight")
+        plt.close(fig)
+    else:
+        print("[isp_analysis] No significant genes (Sig=1) found; skipping top_significant_genes_barplot.png")
+
     # --- 4. Waterfall ---
     df_sorted = df.sort_values("Shift_to_goal_end", ascending=False).reset_index(drop=True)
     fig, ax = plt.subplots(figsize=(14, 5))

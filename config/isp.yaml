@@ -19,8 +19,8 @@ perturbation:
   organ_data: AD # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
-  start_state: WT
-  end_state: AD
+  start_state: AD
+  end_state: WT
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
   genes_to_perturb: []
 
@@ -32,6 +32,7 @@ isp:
   max_ncells: 2000
   emb_layer: 0 # 0 = last layer; -1 = second-to-last (see Geneformer docs)
   emb_mode: cell # cell | cell_and_gene
+
   cell_emb_style: mean_pool
   combos: 0
   anchor_gene: null
