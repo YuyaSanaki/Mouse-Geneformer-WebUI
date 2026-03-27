@@ -3,8 +3,9 @@ In-silico perturbation driver (notebook logic as a script).
 
 Configuration: YAML file (default /app/config/isp.yaml). Override path with --config or ISP_CONFIG.
 CLI --forward-batch-size / --nproc override the YAML runtime section when passed.
-Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
-Also writes {output_root}/{YYYYMMDD}/isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
+Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/[output_subdir/]isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
+Optional output_subdir: paths.output_subdir, ISP_OUTPUT_SUBDIR, or --output-subdir — a single path segment under the date folder so multiple same-day runs do not overwrite each other.
+Also writes {output_root}/{YYYYMMDD}/[output_subdir/]isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
 Optional ISP_FINGERPRINT_INPUTS=1: SHA-256 content fingerprints of paths.dataset and paths.geneformer_model are printed and stored in isp_run_metadata.yaml (can be slow for large trees).
 
 Speed on DGX / large GPUs:
@@ -43,6 +44,23 @@ def _deep_get(m: Mapping[str, Any] | None, *keys: str, default: Any = None) -> A
 
 def _ensure_dir_suffix(path: str) -> str:
     return path if path.endswith(os.sep) else path + os.sep
+
+
+def _resolve_output_subdir(
+    cli: str | None,
+    env: str | None,
+    paths_cfg: Mapping[str, Any] | None,
+) -> str | None:
+    """Single folder segment under {output_root}/{YYYYMMDD}/ for isolating same-day runs."""
+    raw = (cli or env or _deep_get(paths_cfg, "output_subdir", default="") or "").strip()
+    if not raw:
+        return None
+    if raw in (".", "..") or "/" in raw or "\\" in raw or "\x00" in raw:
+        raise ValueError(
+            "output_subdir must be one path segment (no slashes), not '.' or '..'. "
+            "Set paths.output_subdir, ISP_OUTPUT_SUBDIR, or --output-subdir (e.g. run1, batch_a)."
+        )
+    return raw
 
 
 def load_isp_config(path: Path) -> dict[str, Any]:
@@ -154,6 +172,12 @@ def main() -> None:
         help="Date folder under output_root (default: today, or ISP_OUTPUT_DATE).",
     )
     p.add_argument(
+        "--output-subdir",
+        default=None,
+        metavar="NAME",
+        help="Optional subfolder under output_root/DATE for this run (default: paths.output_subdir or ISP_OUTPUT_SUBDIR).",
+    )
+    p.add_argument(
         "--skip-analysis",
         action="store_true",
         help="Skip isp_analysis.py figures/tables after stats.",
@@ -178,6 +202,7 @@ def main() -> None:
     isp_out: str | None
     stats_out: str | None
     date_used: str | None = None
+    run_root: Path | None = None
     if output_root:
         date_used = (
             (args.output_date or os.environ.get("ISP_OUTPUT_DATE") or datetime.now().strftime("%Y%m%d")).strip()
@@ -187,9 +212,18 @@ def main() -> None:
                 "output date must be YYYYMMDD (8 digits). "
                 "Set --output-date, ISP_OUTPUT_DATE, or use default today."
             )
-        isp_out = os.path.join(output_root, date_used, "isp_results")
-        stats_out = os.path.join(output_root, date_used, "ispstats_results")
+        output_subdir = _resolve_output_subdir(
+            args.output_subdir,
+            os.environ.get("ISP_OUTPUT_SUBDIR"),
+            paths,
+        )
+        run_root = Path(output_root) / date_used
+        if output_subdir:
+            run_root = run_root / output_subdir
+        isp_out = os.path.join(str(run_root), "isp_results")
+        stats_out = os.path.join(str(run_root), "ispstats_results")
     else:
+        output_subdir = None
         isp_out = paths.get("isp_results_dir")
         stats_out = paths.get("ispstats_results_dir")
     for key, val in (
@@ -242,8 +276,8 @@ def main() -> None:
     isp_dir = _ensure_dir_suffix(str(isp_out))
     os.makedirs(isp_dir, exist_ok=True)
 
-    if output_root and date_used:
-        log_dir = Path(output_root) / date_used
+    if run_root is not None:
+        log_dir = run_root
     else:
         log_dir = Path(isp_out.rstrip(os.sep)).parent
     log_path = log_dir / "isp_run.log"
@@ -287,6 +321,7 @@ def main() -> None:
                 "forward_batch_size": forward_batch_size,
                 "nproc": nproc,
                 "skip_analysis": args.skip_analysis,
+                "output_subdir": output_subdir or "",
             },
         )
         print(banner, end="")
@@ -325,9 +360,9 @@ def main() -> None:
         print(f"  → ISP results: {isp_out}")
         print(f"  → ISP stats:   {stats_out}")
 
-    if output_root and date_used and accelerator.is_main_process:
+    if run_root is not None and accelerator.is_main_process:
         _write_run_provenance(
-            Path(output_root) / date_used,
+            run_root,
             args.config.resolve(),
             forward_batch_size,
             nproc,
@@ -336,11 +371,11 @@ def main() -> None:
             input_fingerprints=input_fps,
         )
         print(
-            f"  → Provenance: {Path(output_root) / date_used / 'isp_config_used.yaml'} "
+            f"  → Provenance: {run_root / 'isp_config_used.yaml'} "
             f"+ isp_run_metadata.yaml"
         )
 
-    tracker_root: Path | None = Path(output_root) / date_used if (output_root and date_used) else None
+    tracker_root: Path | None = run_root
     main_pipeline_ok = False
 
     try:

@@ -7,8 +7,10 @@ paths:
   # Tokenized HuggingFace dataset directory (.dataset)
   dataset: /app/data/AD/tokenized_dataset/AD_data_0.dataset
   geneformer_model: /app/models/mouse-Geneformer/
-  # Per run: {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date = today, or --output-date / ISP_OUTPUT_DATE)
+  # Per run: {output_root}/{YYYYMMDD}/[output_subdir/]isp_results and .../ispstats_results
+  # (date = today or --output-date / ISP_OUTPUT_DATE; optional output_subdir / ISP_OUTPUT_SUBDIR / --output-subdir for multiple same-day runs)
   output_root: /app/output
+  # output_subdir: run2  # optional single folder name under the date directory
 
 perturbation:
   type: delete # delete | overexpress | inhibit | activate
