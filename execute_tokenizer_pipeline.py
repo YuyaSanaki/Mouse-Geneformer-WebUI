@@ -120,6 +120,7 @@ def main():
 
     write_service_provenance(
         run_root=out_dir,
+        service="tokenize",
         config_path=config_path,
         extra_meta={
             "service": "tokenize",
@@ -162,6 +163,7 @@ def main():
                 "finished_at_utc": datetime.now(timezone.utc).isoformat(),
                 "run_status": "completed" if pipeline_ok else "failed",
             },
+            service="tokenize",
         )
 
 if __name__ == "__main__":
