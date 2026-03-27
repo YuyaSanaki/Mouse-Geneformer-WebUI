@@ -5,7 +5,7 @@
 
 paths:
   # Tokenized HuggingFace dataset directory (.dataset)
-  dataset: /app/data/AD/tokenized_dataset/AD_data_0.dataset
+  dataset: /app/data/Mouse-Genecorpus-20M/eval_dataset/in_silico_perturbation/Cop1KO_isp_mouse_tokenize_dataset_v-n1.dataset
   geneformer_model: /app/models/mouse-Geneformer/
   # Per run: {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date = today, or --output-date / ISP_OUTPUT_DATE)
   output_root: /app/output
@@ -16,11 +16,11 @@ perturbation:
     # "overexpress": move gene to front of rank value encoding
     # "inhibit": move gene to lower quartile of rank value encoding
     # "activate": move gene to higher quartile of rank value encoding
-  organ_data: AD # output filename prefix
+  organ_data: Cop1KO # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
-  start_state: AD
-  end_state: WT
+  start_state: Cop1_WT
+  end_state: Cop1_KO
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
   genes_to_perturb: []
 
@@ -32,7 +32,6 @@ isp:
   max_ncells: 2000
   emb_layer: 0 # 0 = last layer; -1 = second-to-last (see Geneformer docs)
   emb_mode: cell # cell | cell_and_gene
-
   cell_emb_style: mean_pool
   combos: 0
   anchor_gene: null
@@ -47,9 +46,16 @@ stats:
 analysis:
   enabled: true
 
+# Provenance and reproducibility settings
+provenance:
+  # Whether to compute content fingerprints of input data
+  enable_input_fingerprint: true
+  # If true, use fast metadata-based fingerprinting for large datasets
+  fingerprint_fast: true
+
 runtime:
   # GPU minibatch for transformer forwards; raise until just below OOM.
   forward_batch_size: 160
   # HuggingFace datasets map/filter workers (CPU parallelism, not GPU). On ~20 cores, 8–16 is typical;
-  # going higher can contend with the main process and increase RAM without speeding ISP much.
+  # going higher can contend with the main process, use more RAM, and often yields little extra ISP speedup.
   nproc: 16

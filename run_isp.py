@@ -5,6 +5,7 @@ Configuration: YAML file (default /app/config/isp.yaml). Override path with --co
 CLI --forward-batch-size / --nproc override the YAML runtime section when passed.
 Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
 Also writes {output_root}/{YYYYMMDD}/isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
+Optional ISP_FINGERPRINT_INPUTS=1: SHA-256 content fingerprints of paths.dataset and paths.geneformer_model are printed and stored in isp_run_metadata.yaml (can be slow for large trees).
 
 Speed on DGX / large GPUs:
   - Imports apply TF32-friendly matmul settings (see in_silico_perturber._configure_cuda_performance).
@@ -63,6 +64,7 @@ def _write_run_provenance(
     nproc: int,
     cli_forward_batch_size: int | None,
     cli_nproc: int | None,
+    input_fingerprints: dict[str, Any] | None = None,
 ) -> None:
     """Copy the ISP YAML and record metadata next to dated outputs (reproducibility)."""
     run_root.mkdir(parents=True, exist_ok=True)
@@ -102,8 +104,24 @@ def _write_run_provenance(
             pass
     if git_sha:
         meta["git_commit"] = git_sha
+    if input_fingerprints:
+        meta["input_content_fingerprints"] = input_fingerprints
 
     with open(run_root / "isp_run_metadata.yaml", "w", encoding="utf-8") as f:
+        yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
+
+
+def _merge_isp_run_metadata(run_root: Path, updates: dict[str, Any]) -> None:
+    """Append keys to isp_run_metadata.yaml if it exists (e.g. finished_at_utc)."""
+    path = run_root / "isp_run_metadata.yaml"
+    if not path.is_file():
+        return
+    with open(path, encoding="utf-8") as f:
+        meta = yaml.safe_load(f)
+    if not isinstance(meta, dict):
+        meta = {}
+    meta.update(updates)
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
 
 
@@ -230,8 +248,34 @@ def main() -> None:
         log_dir = Path(isp_out.rstrip(os.sep)).parent
     log_path = log_dir / "isp_run.log"
 
+    input_fps: dict[str, Any] | None = None
     if accelerator.is_main_process:
         install_rotating_stdio_tee(log_path, env_prefix="ISP")
+        
+        # Read provenance settings from config with overrides
+        prov_cfg = cfg.get("provenance") or {}
+        enable_fp = prov_cfg.get("enable_input_fingerprint", False)
+        if os.environ.get("ISP_FINGERPRINT_INPUTS"):
+            enable_fp = os.environ.get("ISP_FINGERPRINT_INPUTS").lower() in ("1", "true", "yes")
+        
+        is_fast = prov_cfg.get("fingerprint_fast", True)
+        if os.environ.get("ISP_FINGERPRINT_FAST"):
+            is_fast = os.environ.get("ISP_FINGERPRINT_FAST").lower() in ("1", "true", "yes")
+
+        if enable_fp:
+            from run_input_fingerprint import fingerprint_isp_inputs
+
+            mode_str = "(fast mode)" if is_fast else "(full content mode)"
+            print(f"Computing input content fingerprints {mode_str}...", flush=True)
+            input_fps = fingerprint_isp_inputs(str(dataset_name), str(model_dir), fast=is_fast)
+            for key, block in input_fps.items():
+                digest = block.get("content_fingerprint_sha256")
+                err = block.get("error")
+                print(
+                    f"  {key} content_fingerprint_sha256: {digest or f'({err})'}",
+                    flush=True,
+                )
+
         banner = format_isp_run_banner(
             cfg,
             extras={
@@ -289,58 +333,73 @@ def main() -> None:
             nproc,
             args.forward_batch_size,
             args.nproc,
+            input_fingerprints=input_fps,
         )
         print(
             f"  → Provenance: {Path(output_root) / date_used / 'isp_config_used.yaml'} "
             f"+ isp_run_metadata.yaml"
         )
 
-    print("Starting perturbation...")
-    isp.perturb_data(model_dir, dataset_name, isp_dir, output_prefix)
+    tracker_root: Path | None = Path(output_root) / date_used if (output_root and date_used) else None
+    main_pipeline_ok = False
 
-    # Wait for all processes to finish perturbing
-    accelerator.wait_for_everyone()
+    try:
+        print("Starting perturbation...")
+        isp.perturb_data(model_dir, dataset_name, isp_dir, output_prefix)
 
-    # Only run analysis on the main process to avoid race conditions
-    if accelerator.is_main_process:
-        print("Perturbation complete. Generating stats...")
-        ispstats = InSilicoPerturberStats(
-            mode=stats_mode,
-            genes_perturbed="all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list,
-            combos=combos,
-            anchor_gene=anchor_gene,
-            cell_states_to_model={
-                "state_key": state_key,
-                "start_state": start_state,
-                "goal_state": end_state,
-                "alt_states": alt_state,
-            },
-        )
+        # Wait for all processes to finish perturbing
+        accelerator.wait_for_everyone()
 
-        stats_dir = _ensure_dir_suffix(str(stats_out))
-        os.makedirs(stats_dir, exist_ok=True)
-
-        ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
-        print("Stats generation complete. Check the parquet file.")
-
-        analysis_cfg = cfg.get("analysis") or {}
-        run_figures = analysis_cfg.get("enabled", True) and not args.skip_analysis
-        if run_figures:
-            from isp_analysis import run_isp_figure_analysis
-
-            parquet_file = os.path.join(stats_dir.rstrip(os.sep), f"{output_prefix}.parquet")
-            stats_parent = Path(stats_dir.rstrip(os.sep))
-            figures_dir = stats_parent.parent / "figures"
-            figures_dir.mkdir(parents=True, exist_ok=True)
-            print("Running ISP figure analysis (isp_analysis.py)...")
-            run_isp_figure_analysis(
-                parquet_file,
-                figures_dir,
-                stats_parent,
-                label_start=start_state,
-                label_end=end_state,
+        # Only run analysis on the main process to avoid race conditions
+        if accelerator.is_main_process:
+            print("Perturbation complete. Generating stats...")
+            ispstats = InSilicoPerturberStats(
+                mode=stats_mode,
+                genes_perturbed="all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list,
+                combos=combos,
+                anchor_gene=anchor_gene,
+                cell_states_to_model={
+                    "state_key": state_key,
+                    "start_state": start_state,
+                    "goal_state": end_state,
+                    "alt_states": alt_state,
+                },
             )
-            print(f"Figures directory: {figures_dir}")
+
+            stats_dir = _ensure_dir_suffix(str(stats_out))
+            os.makedirs(stats_dir, exist_ok=True)
+
+            ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
+            print("Stats generation complete. Check the parquet file.")
+
+            analysis_cfg = cfg.get("analysis") or {}
+            run_figures = analysis_cfg.get("enabled", True) and not args.skip_analysis
+            if run_figures:
+                from isp_analysis import run_isp_figure_analysis
+
+                parquet_file = os.path.join(stats_dir.rstrip(os.sep), f"{output_prefix}.parquet")
+                stats_parent = Path(stats_dir.rstrip(os.sep))
+                figures_dir = stats_parent.parent / "figures"
+                figures_dir.mkdir(parents=True, exist_ok=True)
+                print("Running ISP figure analysis (isp_analysis.py)...")
+                run_isp_figure_analysis(
+                    parquet_file,
+                    figures_dir,
+                    stats_parent,
+                    label_start=start_state,
+                    label_end=end_state,
+                )
+                print(f"Figures directory: {figures_dir}")
+            main_pipeline_ok = True
+    finally:
+        if accelerator.is_main_process and tracker_root is not None:
+            _merge_isp_run_metadata(
+                tracker_root,
+                {
+                    "finished_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "run_status": "completed" if main_pipeline_ok else "failed",
+                },
+            )
 
 
 if __name__ == "__main__":

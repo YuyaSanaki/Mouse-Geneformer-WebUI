@@ -119,6 +119,10 @@ class _TeeStream:
     def writable(self) -> bool:
         return True
 
+    def __getattr__(self, name: str) -> Any:
+        """Delegate TextIO attributes (encoding, errors, buffer, newlines, …) to the real stream."""
+        return getattr(self._orig, name)
+
 
 def _parse_size_env(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()

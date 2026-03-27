@@ -51,7 +51,7 @@ On the **main process** only, `run_isp.py` prints a multi-line **config summary*
 | Artifact | Location (with `paths.output_root` + date folder) | Role |
 |----------|-----------------------------------------------------|------|
 | `isp_config_used.yaml` | `./output/<DATE>/` | Copy of the ISP YAML used for this run |
-| `isp_run_metadata.yaml` | `./output/<DATE>/` | UTC start time, resolved runtime overrides, optional `git_commit` |
+| `isp_run_metadata.yaml` | `./output/<DATE>/` | `started_at_utc` at launch; **`finished_at_utc`** and **`run_status`** (`completed` / `failed`) appended when the process exits the perturbation+stats+analysis block (main process only) |
 | `isp_run.log` (+ `.1`, `.2`, … on rotation) | `./output/<DATE>/` | Full console capture from Python onward (see note below) |
 
 Optional environment variables:
@@ -82,7 +82,7 @@ Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline
 | Artifact | Location | Role |
 |----------|----------|------|
 | `tokenize_config_used.yaml` | `data.output_dir` from YAML | Copy of the tokenize config used |
-| `tokenize_run_metadata.yaml` | same | UTC start, paths, `nproc`, optional `git_commit` |
+| `tokenize_run_metadata.yaml` | same | `started_at_utc` at provenance write; **`finished_at_utc`** and **`run_status`** when tokenization finishes or fails |
 | `tokenize_run.log` (+ rotations) | same | Rotating mirror of stdout/stderr for the whole pipeline |
 
 | Variable | Meaning |
