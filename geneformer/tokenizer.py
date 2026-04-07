@@ -84,6 +84,7 @@ class TranscriptomeTokenizer:
         self,
         custom_attr_name_dict=None,
         nproc=1,
+        max_cells=300_000,
         gene_median_file=GENE_MEDIAN_FILE,
         token_dictionary_file=TOKEN_DICTIONARY_FILE,
     ):
@@ -98,6 +99,8 @@ class TranscriptomeTokenizer:
             Values are the names of the attributes in the dataset.
         nproc : int
             Number of processes to use for dataset mapping.
+        max_cells : int
+            Max number of cells to tokenize before saving to disk.
         gene_median_file : Path
             Path to pickle file containing dictionary of non-zero median
             gene expression values across Genecorpus-30M.
@@ -135,7 +138,7 @@ class TranscriptomeTokenizer:
         self.last_dataset_flag = False
 
         # max cells in 1 dataset
-        self.max_cells = 300_000
+        self.max_cells = max_cells
 
     def tokenize_data(
         self,

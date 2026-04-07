@@ -15,7 +15,7 @@ from geneformer import TranscriptomeTokenizer
 from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_tee
 from run_provenance import write_service_provenance, update_service_provenance
 
-def process_single_cell_to_loom(input_dir, loom_temp_dir, settings):
+def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg):
     """Convert subdirectories of (barcodes/features/matrix) to .loom files."""
     os.makedirs(loom_temp_dir, exist_ok=True)
     
@@ -40,7 +40,7 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings):
             else:
                 continue
 
-        print(f"Converting {sample_name} to h5ad...")
+        print(f"Converting {sample_name} to loom...")
         try:
             # Read mtx and set Ensembl IDs
             adata = sc.read_10x_mtx(mtx_path, var_names='gene_ids', make_unique=True)
@@ -56,9 +56,15 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings):
                 else:
                     adata.obs['disease'] = sample_name
             
+            # Ensure all keys in custom_attr_name_dict exist to prevent tokenizer crashes
+            if tokenizer_cfg.get('custom_attr_name_dict'):
+                for attr in tokenizer_cfg['custom_attr_name_dict'].keys():
+                    if attr not in adata.obs.columns:
+                        adata.obs[attr] = ""
+            
             adata.obs['sample_id'] = sample_name
-            # Use h5ad instead of loom for better performance
-            adata.write_h5ad(os.path.join(loom_temp_dir, f"{sample_name}.h5ad"))
+            # Convert to loom
+            adata.write_loom(os.path.join(loom_temp_dir, f"{sample_name}.loom"))
         except Exception as e:
             print(f"Error converting {sample_name}: {e}")
 
@@ -89,14 +95,15 @@ def main():
 
     # Step 1: Handle Conversion if needed
     if data_cfg['input_type'] == "single-cell":
-        print("Input type is single-cell. Converting to h5ad first...")
+        print("Input type is single-cell. Converting to loom first...")
         process_single_cell_to_loom(
             data_cfg['input_dir'], 
             data_cfg['loom_temp_dir'], 
             single_cell_settings,
+            tokenizer_cfg,
         )
         tokenizer_input_dir = data_cfg['loom_temp_dir']
-        file_format = "h5ad"
+        file_format = "loom"
     else:
         print("Input type is loom. Skipping conversion.")
         tokenizer_input_dir = data_cfg['input_dir']
@@ -147,7 +154,8 @@ def main():
     
     tk = TranscriptomeTokenizer(
         custom_attr_name_dict=tokenizer_cfg.get('custom_attr_name_dict'), 
-        nproc=tokenizer_nproc
+        nproc=tokenizer_nproc,
+        max_cells=int(tokenizer_cfg.get('max_cells', 300_000))
     )
     
     print(f"Starting Tokenization of files in {tokenizer_input_dir}...")
