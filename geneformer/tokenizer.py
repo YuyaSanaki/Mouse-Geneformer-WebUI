@@ -119,6 +119,12 @@ class TranscriptomeTokenizer:
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
+        # gene keys for full vocabulary
+        self.gene_keys = list(self.gene_median_dict.keys())
+
+        # protein-coding and miRNA gene list dictionary for selecting rows for tokenization
+        self.genelist_dict = dict(zip(self.gene_keys, [True] * len(self.gene_keys)))
+
         self.gene_median_file_path_dict = {}
         self.start_reading_file_num = 0
 
@@ -232,7 +238,7 @@ class TranscriptomeTokenizer:
         return tokenized_cells, cell_metadata
 
     def tokenize_anndata(self, adata_file_path, target_sum=10_000, chunk_size=512):
-        adata = ad.read(adata_file_path, backed="r")
+        adata = ad.read_h5ad(adata_file_path, backed="r")
 
         if self.custom_attr_name_dict is not None:
             file_cell_metadata = {

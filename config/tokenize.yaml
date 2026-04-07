@@ -7,14 +7,14 @@ data:
   input_type: "single-cell"
 
   # Directory containing sample subfolders (for single-cell) or .loom files
-  input_dir: "/app/data/AD/"
+  input_dir: "/app/data/PIPseq/"
 
   # Intermediate directory for .loom files if starting from single-cell
-  loom_temp_dir: "/app/data/AD/loom_files/"
+  loom_temp_dir: "/app/data/PIPseq/loom_files/"
   
   # Final tokenized dataset output
-  output_dir: "/app/data/AD/tokenized_dataset/"
-  output_prefix: "AD_data"
+  output_dir: "/app/data/PIPseq/tokenized_dataset/"
+  output_prefix: "PIPseq"
 
 tokenizer:
   nproc: 16

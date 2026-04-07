@@ -40,11 +40,12 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings):
             else:
                 continue
 
-        print(f"Converting {sample_name} to loom...")
+        print(f"Converting {sample_name} to h5ad...")
         try:
             # Read mtx and set Ensembl IDs
             adata = sc.read_10x_mtx(mtx_path, var_names='gene_ids', make_unique=True)
-            adata.var['ensembl_id'] = adata.var_names.astype(str)
+            # Strip version numbers from Ensembl IDs (e.g., ENSMUSG00000102693.2 -> ENSMUSG00000102693)
+            adata.var['ensembl_id'] = adata.var_names.astype(str).str.split('.').str[0]
             adata.obs['n_counts'] = adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
 
             if settings.get('extract_metadata_from_path'):
@@ -56,7 +57,8 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings):
                     adata.obs['disease'] = sample_name
             
             adata.obs['sample_id'] = sample_name
-            adata.write_loom(os.path.join(loom_temp_dir, f"{sample_name}.loom"))
+            # Use h5ad instead of loom for better performance
+            adata.write_h5ad(os.path.join(loom_temp_dir, f"{sample_name}.h5ad"))
         except Exception as e:
             print(f"Error converting {sample_name}: {e}")
 
@@ -87,16 +89,18 @@ def main():
 
     # Step 1: Handle Conversion if needed
     if data_cfg['input_type'] == "single-cell":
-        print("Input type is single-cell. Converting to loom first...")
+        print("Input type is single-cell. Converting to h5ad first...")
         process_single_cell_to_loom(
             data_cfg['input_dir'], 
             data_cfg['loom_temp_dir'], 
             single_cell_settings,
         )
         tokenizer_input_dir = data_cfg['loom_temp_dir']
+        file_format = "h5ad"
     else:
         print("Input type is loom. Skipping conversion.")
         tokenizer_input_dir = data_cfg['input_dir']
+        file_format = "loom"
 
     # Step 2: Provenance Tracking & Fingerprinting
     input_paths = {
@@ -152,7 +156,8 @@ def main():
         tk.tokenize_data(
             data_directory=tokenizer_input_dir,
             output_directory=data_cfg['output_dir'],
-            output_prefix=data_cfg['output_prefix']
+            output_prefix=data_cfg['output_prefix'],
+            file_format=file_format
         )
         pipeline_ok = True
         print("Pipeline Finished.")
