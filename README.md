@@ -46,8 +46,6 @@ Code modification and primary testing is on a **DGX Spark (aarch64)**. x86\_64 N
    - Direct link: [MLM-re_token_dictionary_v1.pkl](https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl)
    - Example: `wget -O data/Mouse-Genecorpus-20M/MLM-re_token_dictionary_v1.pkl 'https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl'`
 
-# Push results to local mac
-scp /path/to/file yuyasanaki@192.168.200.102:/Users/yuyasanaki/desktop
 
 
 # in-silico perturbation (docker compose service)

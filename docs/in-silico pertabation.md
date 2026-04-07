@@ -17,21 +17,26 @@ This guide describes the **end-to-end workflow** to run Geneformer ISP on a **ne
 
 You need **raw counts** (single-cell or single-nuc, DO NOT normalize the count) for both start-label (eg WT) and end-label (eg KO). Minimum 500 cells in the cell type of interest; a greater cell number is better. For example, it is ok if there are 1,000 cells of interest (eg muscle) in your single-cell data which contains 8,000 cells in your single-cell data (eg cardiac infarction).
 
-### Acceptable file formats (for `tokenize service`)
-The raw count must have three files (barcodes.tsv.gz, features.tsv.gz, and matrix.trx.gz) in a folder. The file names should be exactly same as "barcodes.tsv.gz, features.tsv.gz, and matrix.trx.gz" as originally generated from single-cell experiment.
+### Acceptable file formats from single-cell RNAseq
+The raw count generated from CellRanger, Dragen, or relatives.
+You must have all three sequence result files for each sequenced samples (barcodes.tsv.gz, features.tsv.gz, and matrix.trx.gz).
+All sequence result files must be in separated folder named as the following rule.
+The folder names represent the samples in three slot ranged by hyphens. The naming rule is 
+`
+./data/ExperimentName/Time-Condition-Replicate/gz files`.
 
-The three files should be in a folder named representing your samples in three slot ranged by hyphen. The naming rule is ./data/your-expeimrnt-name/Time-Condition-Replicate/gz files.
+
 This folder naming is used for following data processing as:
 
 | Field	| Rule |
 |-------|------|
 | Time | First segment of the folder name: parts[0] (e.g. 1w, 3w, 5w).|
-| Condition |	Second segment: parts[1] (e.g. AD, WT, Ccr2KO). |
+| Condition |	Second segment: parts[1] (e.g. WT, KO). |
 | Replicate |	Third segment: parts[2] (e.g. 1st, 2nd, even if you have only 1 replicate, put "1" in the third field). |
 | sample_id |	Full folder name: sample_name (e.g. 1w-AD-1st, 5w-Ccr2KO-AD). |
 
 
-Alternative satating point is .loom file. should locate in ./data/your-experiment-name/loom_files/loom files.
+### Alternative file formats
 
 | Format | Notes |
 |--------|--------|
@@ -39,7 +44,7 @@ Alternative satating point is .loom file. should locate in ./data/your-experimen
 | **`.h5ad` (AnnData)** | Supported via `tokenize_data(..., file_format="h5ad")`. Same biology requirements as loom; fields below must be present in the object. |
 
 
-### Required fields (mouse tokenizer)
+### Required fields for tokenize service
 
 **Genes**
 
@@ -67,18 +72,26 @@ Alternative satating point is .loom file. should locate in ./data/your-experimen
 
 ## 3. Tokenize your data
 
-ISP does **not** read **loom / h5ad / CSV** directly. It expects a **Hugging Face [`datasets`](https://huggingface.co/docs/datasets)** object **saved on disk** as a **`.dataset` directory** with at least:
+ISP does **not** read sc-RNAseq data directly, tokenized data will be used in isp. To make tokenized data, 
 
-| Column / field | Role |
-|----------------|------|
-| `input_ids` | Rank-encoded gene tokens per cell |
-| `length` | Sequence length (added by [`TranscriptomeTokenizer`](../geneformer/tokenizer.py)) |
-| Your state column | Named in YAML as `perturbation.state_key`; values must match `start_state` / `end_state` / `alt_states` **exactly** |
-| Other metadata | Optional (e.g. `cell_type`, `time`) if present on the input and listed in `custom_attr_name_dict`, for `isp.filter_data` or bookkeeping |
 
-**In this repository**, tokenization is driven by **[`config/tokenize.yaml`](../config/tokenize.yaml)** and **[`execute_tokenizer_pipeline.py`](../execute_tokenizer_pipeline.py)** (Compose service **`tokenize`** in [`docker-compose.yml`](../docker-compose.yml)).
+1. **Configure** [`config/tokenize.yaml`](../config/tokenize.yaml): 
+Align the file with your **dataset column names** and **string labels**.
 
-1. **Configure** [`config/tokenize.yaml`](../config/tokenize.yaml): set `data.input_dir`, `data.output_dir`, `data.output_prefix`, and `data.input_type` (`single-cell` or `loom`). Set **`tokenizer.custom_attr_name_dict`** so every **key** is a column attribute on each `.loom` (or `obs` column in `.h5ad`) and every **value** is the column name in the saved `.dataset` (see §2). Tune `tokenizer.nproc` if needed.
+| YAML area | What to set |
+|-----------|-------------|
+| `paths.dataset` | Path to your **`.dataset`** directory |
+| `paths.geneformer_model` | Mouse Geneformer checkpoint directory |
+| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/run_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
+| `perturbation.state_key` | **Exact** name of the metadata column for states |
+| `perturbation.start_state` / `end_state` | **Exact** strings as they appear in that column |
+| `perturbation.alt_states` | List of alternate end-state labels, or `[]` |
+| `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` — keys must exist in the dataset |
+| `isp.max_ncells` | Cap on cells (after filters) |
+| `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers for `datasets` |
+
+`model.type: Pretrained` is the usual choice for the stock mouse model; other options require matching **fine-tuned** checkpoints (see Geneformer docs).
+
 2. **`input_type: single-cell`**: the pipeline builds `.loom` files under `data.loom_temp_dir` from each sample subfolder (10x `filtered_feature_bc_matrix` or matrix in the folder), then runs `TranscriptomeTokenizer`. With **`single_cell_settings.extract_metadata_from_path: true`**, `time` / `genotype` / `replicate` / `disease` / `sample_id` are filled from the folder name as in §2; adjust naming or the script if your labels differ.
 3. **`input_type: loom`**: put `*.loom` files in `data.input_dir` and skip conversion; ensure loom attributes match the **keys** in `custom_attr_name_dict`.
 4. **Run** (from repo root, repo mounted at `/app` in the container):
@@ -87,14 +100,29 @@ ISP does **not** read **loom / h5ad / CSV** directly. It expects a **Hugging Fac
 docker compose run --rm tokenize
 ```
 
+
+The isp service expects a **Hugging Face [`datasets`](https://huggingface.co/docs/datasets)** object **saved on disk** as a **`.dataset` directory** with at least:
+
+| Column / field | Role |
+|----------------|------|
+| `input_ids` | Rank-encoded gene tokens per cell |
+| `length` | Sequence length (added by [`TranscriptomeTokenizer`](../geneformer/tokenizer.py)) |
+| Your state column | Named in YAML as `perturbation.state_key`; values must match `start_state` / `end_state` / `alt_states` **exactly** |
+| Other metadata | Optional (e.g. `cell_type`, `time`) if present on the input and listed in `custom_attr_name_dict`, for `isp.filter_data` or bookkeeping |
+
+In this repository, tokenization is driven by **[`config/tokenize.yaml`](../config/tokenize.yaml)** and **[`execute_tokenizer_pipeline.py`](../execute_tokenizer_pipeline.py)** (Compose service **`tokenize`** in [`docker-compose.yml`](../docker-compose.yml)).
+
+
 The image supplies the **mouse** token dictionary (`MLM-re_token_dictionary_v1.pkl`; see [README](../README.md)) and [`TranscriptomeTokenizer`](../geneformer/tokenizer.py). Output is written under `data.output_dir`, typically **`{output_prefix}_0.dataset`** (suffix increments if the tokenizer splits large runs).
 
 **Notebook or custom scripts:** you can call `TranscriptomeTokenizer` and `save_to_disk` yourself (same column requirements). Example layout: [`run_tokenizer_ad.py`](../run_tokenizer_ad.py).
 
----
 
-## 4. Configure  [`config/isp.yaml`](../config/isp.yaml))
 
+## 4. Run in Docker
+
+
+1. **Configure** [`config/isp.yaml`](../config/isp.yaml): 
 
 Align the file with your **dataset column names** and **string labels**.
 
@@ -112,11 +140,8 @@ Align the file with your **dataset column names** and **string labels**.
 
 `model.type: Pretrained` is the usual choice for the stock mouse model; other options require matching **fine-tuned** checkpoints (see Geneformer docs).
 
----
 
-## 5. Run in Docker
-
-**Run ISP (Single GPU - Default):**
+2. **Run ISP (Single GPU - Default):**
 ```bash
 docker compose run --rm isp
 ```
