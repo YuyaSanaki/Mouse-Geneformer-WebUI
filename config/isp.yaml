@@ -8,7 +8,6 @@ paths:
   dataset: /app/data/AD/tokenized_dataset/AD_data_0.dataset
   geneformer_model: /app/models/mouse-Geneformer/
   # Per run: {output_root}/{YYYYMMDD}/[run_<UTC time>/]isp_results and .../ispstats_results
-  # (date = today or --output-date / ISP_OUTPUT_DATE; default run folder = UTC start time + µs; disable: output_time_subdir false / ISP_OUTPUT_TIME_SUBDIR=0 / --no-output-time-subdir)
   output_root: /app/output
   output_time_subdir: true
   # output_subdir: my_label  # optional fixed name under DATE (overrides time folder)
