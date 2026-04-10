@@ -95,6 +95,7 @@ Optional environment variables:
 
 Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline_log.py).
 
+---
 ### Tokenization service (`docker compose run --rm tokenize`)
 
 [`execute_tokenizer_pipeline.py`](execute_tokenizer_pipeline.py) reads [`config/tokenize.yaml`](config/tokenize.yaml) (override path with env `TOKENIZE_CONFIG`). It prints a **config summary**, then runs conversion (if `input_type: single-cell`) and `TranscriptomeTokenizer`.
@@ -113,6 +114,60 @@ Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline
 | `TOKENIZE_GIT_COMMIT` | Optional commit string for metadata when `git` is missing |
 
 The **tokenize** run log follows the same rules as in [About the run log files](#about-the-run-log-files-log) above (tee after the output directory exists, so conversion + tokenization are both recorded).
+---
+
+### Fine-tuning service (`docker compose run --rm finetune`)
+
+For the details, see [**docs/fine-tuning.md**](docs/fine-tuning.md) (end-to-end workflow for fine-tuning Geneformer on cell or disease classification).
+
+[`run_finetune.py`](run_finetune.py) reads [`config/finetune.yaml`](config/finetune.yaml) (override path with env `FINETUNE_CONFIG` or `--config`). It prints a **config summary**, applies metadata injection, then trains a `BertForSequenceClassification` model using the HuggingFace `Trainer`.
+
+1. **Configure** [`config/finetune.yaml`](config/finetune.yaml):
+
+| YAML area | What to set |
+|-----------|-------------|
+| `paths.dataset` | Tokenized `.dataset` directory |
+| `paths.geneformer_model` | Pretrained model to fine-tune from |
+| `paths.output_root` | Output root; writes to `{output_root}/{YYYYMMDD}/finetune_<UTC>/` |
+| `metadata.add_columns` | Add missing columns (e.g. `{organ_major: brain}`) |
+| `metadata.rename_columns` | Rename columns (e.g. `{genotype: cell_type}`) |
+| `finetune.task_type` | `disease` or `cell_type` |
+| `finetune.label_column` | Which column becomes the classification label |
+| `finetune.organ_key` | Group by this column, or `null` for full dataset |
+| `training.*` | Learning rate, batch size, epochs, scheduler, etc. |
+| `umap.enabled` | Generate UMAP visualization (default: `true`) |
+
+2. **Run:**
+```bash
+docker compose run --rm finetune
+```
+
+3. **Use with ISP** — the script prints the checkpoint path at the end. Update your `isp.yaml`:
+```yaml
+paths:
+  geneformer_model: /app/output/YYYYMMDD/finetune_.../all_run1/
+model:
+  type: CellClassifier
+  num_classes: 2
+```
+
+| Artifact | Location | Role |
+|----------|----------|------|
+| `finetune_config_used.yaml` | `output/{DATE}/finetune_{UTC}/` | Copy of config used |
+| `finetune_run_metadata.yaml` | same | Timestamps, status, saved model paths |
+| `finetune_run.log` (+ rotations) | same | Rotating stdout/stderr mirror |
+| `{group}_run{N}/` | same | Model checkpoint, `results.csv`, `label_dict.json`, `preds.pkl` |
+| `figures/` | same | UMAP PDFs (if enabled) |
+
+| Variable | Meaning |
+|----------|---------|
+| `FINETUNE_CONFIG` | Override config path (default `/app/config/finetune.yaml`) |
+| `FINETUNE_LOG_MAX_BYTES` | Max log size before rotation (default 50 MiB) |
+| `FINETUNE_LOG_BACKUP_COUNT` | Rotated backups to keep (default `5`) |
+| `FINETUNE_DISABLE_RUN_LOG` | Set to `1` to skip file logging |
+| `WANDB_DISABLED` | Set to `true` (default in Compose) to disable W&B |
+
+Implementation: [`run_finetune.py`](run_finetune.py), [`config/finetune.yaml`](config/finetune.yaml).
 
 # Other types of Runs
 ## docker container

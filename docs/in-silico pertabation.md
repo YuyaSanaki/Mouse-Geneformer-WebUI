@@ -90,7 +90,7 @@ Align the file with your **dataset column names** and **string labels**.
 | `isp.max_ncells` | Cap on cells (after filters) |
 | `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers for `datasets` |
 
-`model.type: Pretrained` is the usual choice for the stock mouse model; other options require matching **fine-tuned** checkpoints (see Geneformer docs).
+`model.type: Pretrained` is the usual choice for the stock mouse model. Unspecialized pretrained embeddings measure baseline shifts. If you have fine-tuned the model, choose `CellClassifier` or `GeneClassifier` appropriately (see Section 4).
 
 2. **`input_type: single-cell`**: the pipeline builds `.loom` files under `data.loom_temp_dir` from each sample subfolder (10x `filtered_feature_bc_matrix` or matrix in the folder), then runs `TranscriptomeTokenizer`. With **`single_cell_settings.extract_metadata_from_path: true`**, `time` / `genotype` / `replicate` / `disease` / `sample_id` are filled from the folder name as in §2; adjust naming or the script if your labels differ.
 3. **`input_type: loom`**: put `*.loom` files in `data.input_dir` and skip conversion; ensure loom attributes match the **keys** in `custom_attr_name_dict`.
@@ -138,7 +138,13 @@ Align the file with your **dataset column names** and **string labels**.
 | `isp.max_ncells` | Cap on cells (after filters) |
 | `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers for `datasets` |
 
-`model.type: Pretrained` is the usual choice for the stock mouse model; other options require matching **fine-tuned** checkpoints (see Geneformer docs).
+### Choosing `model.type`
+
+The `model.type` parameter in your `isp.yaml` configuration dictates which underlying architecture of the model is loaded:
+
+- **`Pretrained`**: Loads the base foundation model (`BertForMaskedLM`). This is the usual choice for the stock mouse model. It extracts general-purpose cell and gene embeddings to measure how perturbations shift unspecialized cell states.
+- **`CellClassifier`**: Loads a sequence classification model (`BertForSequenceClassification`). Use this when you've fine-tuned Geneformer on a cell-level classification task (e.g., predicting `disease` or `cell_type` via the `finetune` service). ISP will use these specialized embeddings to measure shifts specifically along your classification axis.
+- **`GeneClassifier`**: Loads a token classification model (`BertForTokenClassification`). Use this if you have fine-tuned Geneformer to classify or predict properties of individual genes instead of whole cells.
 
 
 2. **Run ISP (Single GPU - Default):**
