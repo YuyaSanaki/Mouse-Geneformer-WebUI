@@ -515,6 +515,10 @@ class PrecollatorForGeneAndCellClassification(SpecialTokensMixin):
 
         return token_dictionary.get(token)
 
+    def save_pretrained(self, save_directory: str, **kwargs) -> None:
+        """No-op: Geneformer uses its own token dictionary, not a HF tokenizer."""
+        pass
+
     def __len__(self):
         return len(token_dictionary)
 
