@@ -6,7 +6,7 @@
 paths:
   # Tokenized HuggingFace dataset directory (.dataset)
   dataset: /app/data/PIPseq/tokenized_dataset/PIPseq_0.dataset
-  geneformer_model: /app/models/mouse-Geneformer/
+  geneformer_model: /app/output/20260410/finetune_075259_676389Z/all_run1 #/app/models/mouse-Geneformer/
   # Per run: {output_root}/{YYYYMMDD}/[run_<UTC time>/]isp_results and .../ispstats_results
   output_root: /app/output
   output_time_subdir: true
@@ -27,7 +27,7 @@ perturbation:
   genes_to_perturb: []
 
 model:
-  type: Pretrained # Pretrained | GeneClassifier | CellClassifier
+  type: CellClassifier #Pretrained # Pretrained | GeneClassifier | CellClassifier
   num_classes: 2
 
 isp:
