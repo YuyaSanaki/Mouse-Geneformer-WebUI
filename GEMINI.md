@@ -8,8 +8,10 @@
 - Use YAML files in the `config/` directory to manage parameters for different tasks.
 - **Tokenization:** Uses `config/tokenize.yaml`. Execute via `docker compose run --rm tokenize`.
 - **In Silico Perturbation (ISP):** Uses `config/isp.yaml` (or specialized versions like `config/isp_1w_WT_AD.yaml`). Execute via `docker compose run --rm isp accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/your_config.yaml`.
+- **Fine-Tuning:** Uses `config/finetune.yaml`. Execute via `docker compose run --rm finetune`. Supports disease and cell-type classification. Fine-tuned models can then be used by ISP by setting `model.type: CellClassifier` and pointing `paths.geneformer_model` to the checkpoint.
 
 ## Data Structure
-- Input single-cell data is located in `data/AD/`.
-- Tokenized datasets are stored in `data/AD/tokenized_dataset/`.
+- Input single-cell data is located in `data/AD/` and `data/PIPseq/`.
+- Tokenized datasets are stored in `data/*/tokenized_dataset/`.
 - ISP results are written to `output/YYYYMMDD/`.
+- Fine-tuned models are written to `output/YYYYMMDD/finetune_*/`.

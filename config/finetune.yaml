@@ -1,0 +1,86 @@
+# =============================================================================
+# Fine-Tuning Configuration — config/finetune.yaml
+# Execute via: docker compose run --rm finetune
+# =============================================================================
+
+paths:
+  # Tokenized HuggingFace dataset directory (.dataset)
+  dataset: /app/data/PIPseq/tokenized_dataset/PIPseq_0.dataset
+  # Pretrained model to fine-tune from
+  geneformer_model: /app/models/mouse-Geneformer/
+  # Per run: {output_root}/{YYYYMMDD}/[finetune_<UTC time>/]
+  output_root: /app/output
+  output_time_subdir: true
+
+# ── Metadata injection ──────────────────────────────────────────────
+# Use this section to add or remap columns the dataset may be missing.
+# Applied BEFORE the training loop.
+metadata:
+  # Rename existing columns: { existing_name: new_name }
+  rename_columns: {}
+    # Example: { genotype: cell_type }
+
+  # Add a fixed-value column to every row
+  add_columns:
+    organ_major: aorta            # All PIPseq data is brain tissue
+
+  # Derive a column from another using a value mapping
+  # derive_columns:
+  #   cell_type:
+  #     source: genotype
+  #     mapping:
+  #       WT: wild_type
+  #       AD: alzheimer
+
+# ── Fine-tuning task ────────────────────────────────────────────────
+finetune:
+  # "disease" or "cell_type" — which column becomes the classification label
+  task_type: disease
+
+  # Column used as the label source (renamed to "label" internally)
+  label_column: disease
+
+  # If set, dataset is grouped by this column and fine-tuned per-group.
+  # Set to null to train on the entire dataset as one group.
+  organ_key: null
+
+  # Drop classes representing < this fraction of total cells (0.005 = 0.5%)
+  rare_class_threshold: 0.005
+
+  # Train/eval split ratio
+  train_split: 0.8
+  shuffle_seed: 42
+
+# ── Model ───────────────────────────────────────────────────────────
+model:
+  max_input_size: 2048        # 2^11
+  freeze_layers: 0            # Number of bottom BERT layers to freeze
+  ignore_mismatched_sizes: true
+
+# ── Training hyperparameters ────────────────────────────────────────
+training:
+  learning_rate: 5e-5
+  batch_size: 6
+  eval_batch_size: 2
+  lr_scheduler_type: linear   # linear | cosine | polynomial
+  warmup_steps: 500
+  epochs: 10
+  weight_decay: 0.001
+  fp16: true
+  seed: 42
+  num_runs: 1                 # Multiple runs with different seeds
+
+# ── UMAP visualization ─────────────────────────────────────────────
+umap:
+  enabled: true               # Generate UMAP on the last run
+  n_neighbors: 15
+  pca_components: 50          # PCA reduction before UMAP
+
+# ── Runtime ─────────────────────────────────────────────────────────
+runtime:
+  nproc: 16
+
+# ── Provenance ──────────────────────────────────────────────────────
+provenance:
+  enable_input_fingerprint: true
+  fingerprint_fast: true

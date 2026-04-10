@@ -60,3 +60,17 @@ services:
     command:
       - python3
       - /app/execute_tokenizer_pipeline.py
+
+  # Fine-tuning: docker compose run --rm finetune
+  finetune:
+    <<: *geneformer-base
+    container_name: mouse_geneformer_finetune
+    environment:
+      - LD_PRELOAD=${LD_PRELOAD:-}
+      - FINETUNE_CONFIG=/app/config/finetune.yaml
+      - WANDB_DISABLED=true
+    command:
+      - python3
+      - /app/run_finetune.py
+      - --config
+      - /app/config/finetune.yaml
