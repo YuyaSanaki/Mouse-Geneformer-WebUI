@@ -85,7 +85,7 @@ def _want_auto_time_subdir(
 
 def _utc_run_folder_name(now_utc: datetime) -> str:
     """One path segment: UTC start time + microseconds to avoid same-second clashes."""
-    return f"run_{now_utc.strftime('%H%M%S')}_{now_utc.microsecond:06d}Z"
+    return f"isp_{now_utc.strftime('%H%M%S')}_{now_utc.microsecond:06d}Z"
 
 
 def _broadcast_run_folder_from_main(accelerator: Any, value_on_main: str) -> str:

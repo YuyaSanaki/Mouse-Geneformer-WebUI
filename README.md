@@ -60,7 +60,7 @@ docker compose run --rm isp
 ```
 This runs `accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
 
-Outputs go under `./output/<DATE>/run_<UTC time>/isp_results` (default), `./output/<DATE>/run_<UTC time>/ispstats_results`, and `./output/<DATE>/run_<UTC time>/figures` when `paths.output_root` and `paths.output_time_subdir` are true in `config/isp.yaml`. Use `paths.output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for the previous flat layout under `<DATE>/`. There will also be CSV tables next to the stats.
+Outputs go under `./output/<DATE>/isp_<UTC time>/isp_results` (default), `./output/<DATE>/isp_<UTC time>/ispstats_results`, and `./output/<DATE>/isp_<UTC time>/figures` when `paths.output_root` and `paths.output_time_subdir` are true in `config/isp.yaml`. Use `paths.output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for the previous flat layout under `<DATE>/`. There will also be CSV tables next to the stats.
 
 ### Run provenance, config summary, and rotating logs (ISP)
 
@@ -68,9 +68,9 @@ On the **main process** only, `run_isp.py` prints a multi-line **config summary*
 
 | Artifact | Location (with `paths.output_root` + date + default run folder) | Role |
 |----------|-----------------------------------------------------|------|
-| `isp_config_used.yaml` | `./output/<DATE>/run_<UTC>/` | Copy of the ISP YAML used for this run |
-| `isp_run_metadata.yaml` | `./output/<DATE>/run_<UTC>/` | `started_at_utc` at launch; **`finished_at_utc`** and **`run_status`** (`completed` / `failed`) appended when the process exits the perturbation+stats+analysis block (main process only) |
-| `isp_run.log` (+ `.1`, `.2`, … on rotation) | `./output/<DATE>/run_<UTC>/` | Full console capture from Python onward (see note below) |
+| `isp_config_used.yaml` | `./output/<DATE>/isp_<UTC>/` | Copy of the ISP YAML used for this run |
+| `isp_run_metadata.yaml` | `./output/<DATE>/isp_<UTC>/` | `started_at_utc` at launch; **`finished_at_utc`** and **`run_status`** (`completed` / `failed`) appended when the process exits the perturbation+stats+analysis block (main process only) |
+| `isp_run.log` (+ `.1`, `.2`, … on rotation) | `./output/<DATE>/isp_<UTC>/` | Full console capture from Python onward (see note below) |
 
 Optional environment variables:
 
@@ -80,7 +80,7 @@ Optional environment variables:
 | `ISP_LOG_BACKUP_COUNT` | How many rotated backups to keep (default `5`; `0` truncates instead of renaming) |
 | `ISP_DISABLE_RUN_LOG` | Set to `1` / `true` / `yes` to skip file logging (console unchanged) |
 | `ISP_GIT_COMMIT` | If set, written into `isp_run_metadata.yaml` when `git` is unavailable in the container |
-| `ISP_OUTPUT_TIME_SUBDIR` | `1` / `true` / `yes` (default follows YAML) or `0` / `false` / `no` to disable the automatic `run_<UTC time>` folder under each `<DATE>` |
+| `ISP_OUTPUT_TIME_SUBDIR` | `1` / `true` / `yes` (default follows YAML) or `0` / `false` / `no` to disable the automatic `isp_<UTC time>` folder under each `<DATE>` |
 | `ISP_OUTPUT_SUBDIR` | Fixed folder name under `<DATE>` (overrides the time-based folder); must be a single path segment |
 
 **Note:** Messages printed by `accelerate launch` *before* `run_isp.py` starts (for example default-parameter hints) appear only in the terminal unless you redirect the Compose command at the shell level.
@@ -90,7 +90,7 @@ Optional environment variables:
 - **What is captured:** Everything written to **stdout** and **stderr** from the moment the tee is installed — including ordinary `print` output, HuggingFace `datasets` progress bars, and other libraries that write to the console. This is a **text** log (UTF-8, with replacement for invalid bytes).
 - **What is not captured:** Anything emitted **before** Python attaches the tee (notably `accelerate launch` startup lines). For a full shell transcript, run Compose with your own redirection (e.g. `docker compose run ... 2>&1 | tee full_terminal.log`).
 - **ISP and multiple GPUs:** Only the **main** process writes `isp_run.log`. Other ranks still print to the terminal but do not append to that file, so the log stays a single coherent stream without interleaved corruption.
-- **Append vs. rotate:** A new run that reuses the **same** output directory (same `<DATE>` and same run folder, or flat layout under `<DATE>`) **appends** to the existing `isp_run.log` / `tokenize_run.log`. Default ISP layout uses a new `run_<UTC time>` folder per launch, so logs normally do not mix across runs. When the file exceeds `*_LOG_MAX_BYTES`, it is rotated: the current file becomes `*.log.1`, the previous `.1` becomes `.2`, and so on, up to `*_LOG_BACKUP_COUNT`. With `*_LOG_BACKUP_COUNT=0`, the log is **truncated** when the size limit is hit instead of keeping numbered backups.
+- **Append vs. rotate:** A new run that reuses the **same** output directory (same `<DATE>` and same run folder, or flat layout under `<DATE>`) **appends** to the existing `isp_run.log` / `tokenize_run.log`. Default ISP layout uses a new `isp_<UTC time>` folder per launch, so logs normally do not mix across runs. When the file exceeds `*_LOG_MAX_BYTES`, it is rotated: the current file becomes `*.log.1`, the previous `.1` becomes `.2`, and so on, up to `*_LOG_BACKUP_COUNT`. With `*_LOG_BACKUP_COUNT=0`, the log is **truncated** when the size limit is hit instead of keeping numbered backups.
 - **Provenance:** The YAML copies (`*_config_used.yaml`) and small metadata files (`*_run_metadata.yaml`) are the authoritative snapshot of **config**; the `.log` file is for **console history** and debugging long runs.
 
 Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline_log.py).
@@ -168,6 +168,27 @@ model:
 | `WANDB_DISABLED` | Set to `true` (default in Compose) to disable W&B |
 
 Implementation: [`run_finetune.py`](run_finetune.py), [`config/finetune.yaml`](config/finetune.yaml).
+
+---
+
+### ISP UMAP Visualization service (`docker compose run --rm isp_umap`)
+
+For the details, see [**docs/isp_umap.md**](docs/isp_umap.md) (end-to-end info about the visual trajectory analysis generated).
+
+[`run_isp_umap.py`](run_isp_umap.py) reads [`config/isp_umap.yaml`](config/isp_umap.yaml). It leverages your tokenized dataset and fine-tuned model to simulate an in-silico gene perturbation (e.g. `Igfbp2`) locally and pushes the data back through manually to evaluate internal embeddings shifts via UMAP.
+
+1. **Configure** [`config/isp_umap.yaml`](config/isp_umap.yaml):
+    - Set the `gene_to_perturb` (supports symbols like `Igfbp2` or explicit Ensembl IDs)
+    - Specify `start_state` (original disease mode) and `end_state` (target healthy mode)
+2. **Run:**
+```bash
+docker compose run --rm isp_umap
+```
+
+| Artifact | Location | Role |
+|----------|----------|------|
+| `umap_*.png` | `output/{DATE}/isp_umap_{UTC}/` | Seaborn trajectory visualization graphic |
+| `[STATE]_embs.npy` | same | Raw extracted intermediate embeddings arrays exported for standalone notebooks |
 
 # Other types of Runs
 ## docker container

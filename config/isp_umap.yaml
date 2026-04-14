@@ -1,0 +1,40 @@
+# =============================================================================
+# ISP UMAP Generator Configuration
+# Path: /app/config/isp_umap.yaml
+# =============================================================================
+
+paths:
+  # Path to tokenized HuggingFace dataset
+  dataset: /app/data/PIPseq/tokenized_dataset/PIPseq_0.dataset
+  # Path to the fine-tuned Geneformer model
+  geneformer_model: /app/output/20260410/finetune_075259_676389Z/all_run1
+
+umap:
+  # Random seed for robust/reproducible UMAP plotting
+  seed: 42
+  # UMAP parameters
+  n_neighbors: 15
+  min_dist: 0.1
+  # How many trajectories (grey arrows) to draw from Start -> Perturbed Start
+  num_trajectory_arrows: 100
+  # Maximum cells to extract per state to prevent memory limits
+  max_cells_per_state: 2000
+
+perturbation:
+  # Gene to perturb. Accepts Ensembl ID (e.g. ENSMUSG00000039323) or Gene Symbol (e.g. Igfbp2)
+  gene_to_perturb: Igfbp2
+  # Type of perturbation to mathematically simulate: "delete" (currently supported for UMAP extract)
+  type: delete
+  
+  # Dataset column specifying the cell condition
+  state_key: disease
+  # The starting cell condition (the one being perturbed)
+  start_state: AD
+  # The goal/target condition (the one to compare against)
+  end_state: WT
+
+runtime:
+  # Number of labels output by the finetuned Sequence Classification model
+  num_classes: 2
+  # Batch size for dataset mapping processes
+  batch_size: 100
