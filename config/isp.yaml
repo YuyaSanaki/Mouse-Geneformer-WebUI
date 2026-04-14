@@ -21,8 +21,8 @@ perturbation:
   organ_data: PIPseq # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
-  start_state: WT
-  end_state: AD
+  start_state: AD
+  end_state: WT
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
   genes_to_perturb: []
 

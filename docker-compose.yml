@@ -74,3 +74,15 @@ services:
       - /app/run_finetune.py
       - --config
       - /app/config/finetune.yaml
+
+  # ISP UMAP Plot Generation: docker compose run --rm isp_umap
+  isp_umap:
+    <<: *geneformer-base
+    container_name: mouse_geneformer_isp_umap
+    environment:
+      - ISP_UMAP_CONFIG=/app/config/isp_umap.yaml
+    command:
+      - python3
+      - /app/run_isp_umap.py
+      - --config
+      - /app/config/isp_umap.yaml
