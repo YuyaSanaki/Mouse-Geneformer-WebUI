@@ -96,7 +96,7 @@ Optional environment variables:
 Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline_log.py).
 
 ---
-### Tokenization service (`docker compose run --rm tokenize`)
+# Tokenization service (`docker compose run --rm tokenize`)
 
 [`execute_tokenizer_pipeline.py`](execute_tokenizer_pipeline.py) reads [`config/tokenize.yaml`](config/tokenize.yaml) (override path with env `TOKENIZE_CONFIG`). It prints a **config summary**, then runs conversion (if `input_type: single-cell`) and `TranscriptomeTokenizer`.
 
@@ -116,7 +116,7 @@ Implementation: [`run_isp.py`](run_isp.py), [`run_pipeline_log.py`](run_pipeline
 The **tokenize** run log follows the same rules as in [About the run log files](#about-the-run-log-files-log) above (tee after the output directory exists, so conversion + tokenization are both recorded).
 ---
 
-### Fine-tuning service (`docker compose run --rm finetune`)
+# Fine-tuning service (`docker compose run --rm finetune`)
 
 For the details, see [**docs/fine-tuning.md**](docs/fine-tuning.md) (end-to-end workflow for fine-tuning Geneformer on cell or disease classification).
 
@@ -171,7 +171,7 @@ Implementation: [`run_finetune.py`](run_finetune.py), [`config/finetune.yaml`](c
 
 ---
 
-### ISP UMAP Visualization service (`docker compose run --rm isp_umap`)
+# ISP UMAP Visualization service (`docker compose run --rm isp_umap`)
 
 For the details, see [**docs/isp_umap.md**](docs/isp_umap.md) (end-to-end info about the visual trajectory analysis generated).
 

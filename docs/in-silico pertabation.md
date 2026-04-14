@@ -82,7 +82,7 @@ Align the file with your **dataset column names** and **string labels**.
 |-----------|-------------|
 | `paths.dataset` | Path to your **`.dataset`** directory |
 | `paths.geneformer_model` | Mouse Geneformer checkpoint directory |
-| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/run_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
+| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/isp_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
 | `perturbation.state_key` | **Exact** name of the metadata column for states |
 | `perturbation.start_state` / `end_state` | **Exact** strings as they appear in that column |
 | `perturbation.alt_states` | List of alternate end-state labels, or `[]` |
@@ -130,7 +130,7 @@ Align the file with your **dataset column names** and **string labels**.
 |-----------|-------------|
 | `paths.dataset` | Path to your **`.dataset`** directory |
 | `paths.geneformer_model` | Mouse Geneformer checkpoint directory |
-| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/run_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
+| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/isp_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
 | `perturbation.state_key` | **Exact** name of the metadata column for states |
 | `perturbation.start_state` / `end_state` | **Exact** strings as they appear in that column |
 | `perturbation.alt_states` | List of alternate end-state labels, or `[]` |
@@ -168,10 +168,10 @@ Alternative with Jupyter container already up:
 
 ## 6. Outputs and downstream analysis
 
-- **Intermediate / perturbation outputs:** `{paths.output_root}/{YYYYMMDD}/[run_<UTC>/]isp_results` (unless using legacy path keys; omit `run_<UTC>/` when `output_time_subdir` is false).
-- **Stats (e.g. parquet):** `{paths.output_root}/{YYYYMMDD}/[run_<UTC>/]ispstats_results`.
-- **Figures + table exports:** after stats, `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) (same logic as [`isp_analysis.ipynb`](../isp_analysis.ipynb)): PNGs under **`{paths.output_root}/{YYYYMMDD}/[run_<UTC>/]figures/`** (e.g. `shift_distribution.png`, `volcano_plot.png`, `top_genes_barplot.png`, `waterfall_plot.png`); CSV summaries stay next to the parquet in `ispstats_results`. Disable with `analysis.enabled: false` in `isp.yaml` or `--skip-analysis`.
-- **Run log + provenance (per run folder):** `isp_run.log` (rotating text log of stdout/stderr from `run_isp.py` on the **main** process only), plus `isp_config_used.yaml` and `isp_run_metadata.yaml`, under the same `run_<UTC>/` directory as results when time subdirs are enabled. Tokenization writes analogous files under `data.output_dir` (`tokenize_run.log`, `tokenize_config_used.yaml`, `tokenize_run_metadata.yaml`). See **[README.md § Run provenance and logs](../README.md#run-provenance-config-summary-and-rotating-logs-isp)** for behavior, rotation, and env vars (`ISP_LOG_*`, `TOKENIZE_LOG_*`, disable flags).
+- **Intermediate / perturbation outputs:** `{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]isp_results` (unless using legacy path keys; omit `isp_<UTC>/` when `output_time_subdir` is false).
+- **Stats (e.g. parquet):** `{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]ispstats_results`.
+- **Figures + table exports:** after stats, `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) (same logic as [`isp_analysis.ipynb`](../isp_analysis.ipynb)): PNGs under **`{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]figures/`** (e.g. `shift_distribution.png`, `volcano_plot.png`, `top_genes_barplot.png`, `waterfall_plot.png`); CSV summaries stay next to the parquet in `ispstats_results`. Disable with `analysis.enabled: false` in `isp.yaml` or `--skip-analysis`.
+- **Run log + provenance (per run folder):** `isp_run.log` (rotating text log of stdout/stderr from `run_isp.py` on the **main** process only), plus `isp_config_used.yaml` and `isp_run_metadata.yaml`, under the same `isp_<UTC>/` directory as results when time subdirs are enabled. Tokenization writes analogous files under `data.output_dir` (`tokenize_run.log`, `tokenize_config_used.yaml`, `tokenize_run_metadata.yaml`). See **[README.md § Run provenance and logs](../README.md#run-provenance-config-summary-and-rotating-logs-isp)** for behavior, rotation, and env vars (`ISP_LOG_*`, `TOKENIZE_LOG_*`, disable flags).
 
 ---
 
