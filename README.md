@@ -59,6 +59,7 @@ For the details, see [**docs/in-silico pertabation.md**](docs/in-silico%20pertab
 docker compose run --rm isp
 ```
 This runs `accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
+If you want to run multiple consecutively, ` docker compose run --rm isp accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp_WT-AD.yaml && docker compose run --rm isp accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp_AD-WT.yaml`.
 
 Outputs go under `./output/<DATE>/isp_<UTC time>/isp_results` (default), `./output/<DATE>/isp_<UTC time>/ispstats_results`, and `./output/<DATE>/isp_<UTC time>/figures` when `paths.output_root` and `paths.output_time_subdir` are true in `config/isp.yaml`. Use `paths.output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for the previous flat layout under `<DATE>/`. There will also be CSV tables next to the stats.
 

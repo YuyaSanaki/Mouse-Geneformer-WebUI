@@ -1,0 +1,21 @@
+
+
+
+---Asano-san
+    3/5w tokenize 20260416
+    Finetune 20260416
+isp 20260417
+see if igfbp2 comes out
+igfbp2 oe inWT
+cell type specific isp of igfbp2
+Human geneformer isp of igfbp2
+scPRINT2 ko igfbp2 -> downstream enrichment
+geneformer decoder
+
+
+
+---
+cell type specification
+web interface
+multiple gene isp
+

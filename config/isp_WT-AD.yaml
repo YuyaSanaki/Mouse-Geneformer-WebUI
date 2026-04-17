@@ -6,9 +6,8 @@
 paths:
   # Tokenized HuggingFace dataset directory (.dataset)
   dataset: /app/data/Asano3and5w/tokenized_dataset/Asano3and5w_0.dataset
-  # Original: /app/data/Mouse-Genecorpus-20M/MLM-re_All_mouse_tokenize_dataset.dataset
   geneformer_model: /app/output/20260416/finetune_112337_032136Z/all_run1
-  #/app/models/mouse-Geneformer/
+   #/app/models/mouse-Geneformer/
   # Per run: {output_root}/{YYYYMMDD}/[run_<UTC time>/]isp_results and .../ispstats_results
   output_root: /app/output
   output_time_subdir: true
@@ -23,8 +22,8 @@ perturbation:
   organ_data: AD # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
-  start_state: AD
-  end_state: WT
+  start_state: WT
+  end_state: AD
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
   genes_to_perturb: []
 
@@ -58,7 +57,8 @@ provenance:
   fingerprint_fast: true
 
 runtime:
-  # GPU minibatch for transformer forwards; raise until below OOM.
-  forward_batch_size: 100
-  # HuggingFace datasets map/filter CPU workers.
+  # GPU minibatch for transformer forwards; raise until just below OOM.
+  forward_batch_size: 300
+  # HuggingFace datasets map/filter workers (CPU parallelism, not GPU). On ~20 cores, 8–16 is typical;
+  # going higher can contend with the main process, use more RAM, and often yields little extra ISP speedup.
   nproc: 16
