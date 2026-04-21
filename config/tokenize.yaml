@@ -7,14 +7,14 @@ data:
   input_type: "single-cell"
 
   # Directory containing sample subfolders (for single-cell) or .loom files
-  input_dir: "/app/data/Asano3and5w/"
+  input_dir: "/app/data/Asano3w/"
 
   # Intermediate directory for .loom files if starting from single-cell
-  loom_temp_dir: "/app/data/Asano3and5w/loom_files/"
+  loom_temp_dir: "/app/data/Asano3w/loom_files/"
   
   # Final tokenized dataset output
-  output_dir: "/app/data/Asano3and5w/tokenized_dataset/"
-  output_prefix: "Asano3and5w"
+  output_dir: "/app/data/Asano3w/tokenized_dataset/"
+  output_prefix: "Asano3w"
 
 tokenizer:
   nproc: 16
