@@ -7,13 +7,17 @@
     isp 20260417
     see if igfbp2 comes ou20260419
     igfbp2 oe inWT 20260419
+    Asano 3w only fintuning 20260421
+    Asano 5w only FT 20260421
+    Asano PIPseq+Chromium3/5w 20260423 -> use this result
 
-Asano 3w only fintuning
+cell type identification that affected by igfbp2 isp
 
-cell type specific isp of igfbp2
+
 Human geneformer isp of igfbp2
 scPRINT2 ko igfbp2 -> downstream enrichment
-geneformer decoder
+Geneformer cell embeding traces scPRITN downstream analysis, which cells sensitive and why sensitive
+
 
 
 
