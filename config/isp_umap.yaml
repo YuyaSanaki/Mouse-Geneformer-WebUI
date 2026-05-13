@@ -5,9 +5,9 @@
 
 paths:
   # Path to tokenized HuggingFace dataset
-  dataset: /app/data/Asano3and5w/tokenized_dataset/Asano3and5w_0.dataset
+  dataset: /app/data/AsanoPIPand3and5w/tokenized_dataset/AsanoPIPand3and5w_0.dataset
   # Path to the fine-tuned Geneformer model
-  geneformer_model: /app/output/20260416/finetune_112337_032136Z/all_run1
+  geneformer_model: /app/output/20260422/finetune_004752_215426Z/all_run1
 
 umap:
   # Random seed for robust/reproducible UMAP plotting

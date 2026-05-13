@@ -5,9 +5,9 @@
 
 paths:
   # Tokenized HuggingFace dataset directory (.dataset)
-  dataset: /app/data/Asano3w/tokenized_dataset/Asano3w_0.dataset
+  dataset: /app/data/AsanoPIPand3and5w/tokenized_dataset/AsanoPIPand3and5w_0.dataset
   # Original: /app/data/Mouse-Genecorpus-20M/MLM-re_All_mouse_tokenize_dataset.dataset
-  geneformer_model: /app/output/20260421/finetune_120908_000908Z/all_run1
+  geneformer_model: /app/output/20260422/finetune_004752_215426Z/all_run1
   #/app/models/mouse-Geneformer/
   # Per run: {output_root}/{YYYYMMDD}/[run_<UTC time>/]isp_results and .../ispstats_results
   output_root: /app/output
@@ -26,7 +26,7 @@ perturbation:
   start_state: AD
   end_state: WT
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
-  genes_to_perturb: [Igfbp2]
+  genes_to_perturb: []
 
 model:
   type: CellClassifier #Pretrained # Pretrained | GeneClassifier | CellClassifier
