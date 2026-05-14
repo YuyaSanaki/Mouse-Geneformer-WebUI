@@ -75,7 +75,7 @@ def _tail_log(path: Path, max_bytes: int = 64_000) -> str:
         return "(Waiting for log file…)"
     data = path.read_bytes()
     if len(data) > max_bytes:
-        data = b"… (showing tail)\n" + data[-max_bytes:]
+        data = b"... (showing tail)\n" + data[-max_bytes:]
     return data.decode("utf-8", errors="replace")
 
 
@@ -151,8 +151,10 @@ def main() -> None:
     with c1:
         st.subheader("Data upload")
         st.caption(
-            "Files are saved under the workspace. For tokenization, upload a `.zip` of your "
-            "`single-cell` folder tree or individual files."
+            "Files are saved under the workspace. Upload limit is raised in `.streamlit/config.toml` "
+            "and Compose (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE`, default here ~1 TB). "
+            "For very large data, copying into the bind-mounted `data/` tree and pointing YAML at "
+            "that path avoids holding the whole file in RAM."
         )
         uploaded = st.file_uploader("Upload", accept_multiple_files=True)
         if uploaded:

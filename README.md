@@ -210,6 +210,8 @@ docker compose up -d mouse-geneformer
 
 ## Streamlit Web UI (same container image as CLI)
 
+For layout, workspace paths, uploads, and environment variables, see [**docs/web-ui.md**](docs/web-ui.md).
+
 The `webui` service runs [Streamlit](https://streamlit.io/) in the **same** `mouse-geneformer` image. Jobs started from the browser execute as **subprocesses** in that container (`accelerate launch … run_isp.py`, `execute_tokenizer_pipeline.py`, etc.), matching the CLI entrypoints.
 
 ```bash
@@ -219,6 +221,8 @@ docker compose up -d webui
 ```
 
 Uploads and per-run configs/logs are written under `data/streamlit_workspace/` (ignored when `data/` is not tracked). Set `WEBUI_ROOT` or `WEBUI_WORKSPACE` in the service environment if you need non-default paths.
+
+Large uploads: Streamlit’s default 200 MB cap is raised via [`.streamlit/config.toml`](.streamlit/config.toml) and the `webui` service env `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` (megabytes). For multi–hundred GB or TB-scale data, prefer placing files under the mounted repo (e.g. `data/…`) and referencing those paths in YAML instead of browser upload.
 
 ### 1. in silico pertubation jupyter notebook edit done
     docker compose up to open jupyterlab

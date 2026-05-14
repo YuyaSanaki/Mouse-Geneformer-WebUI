@@ -47,12 +47,16 @@ services:
       - "8501:8501"
     environment:
       - WANDB_DISABLED=true
+      # Megabytes; overrides default 200 MB cap on st.file_uploader (see .streamlit/config.toml).
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1024000
     command:
       - streamlit
       - run
       - /app/streamlit_app/app.py
       - --server.address=0.0.0.0
       - --server.port=8501
+      - --server.maxUploadSize
+      - "1024000"
       - --browser.gatherUsageStats=false
 
   # One-shot ISP run: docker compose run --rm isp
