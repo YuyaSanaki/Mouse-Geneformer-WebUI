@@ -37,6 +37,24 @@ services:
       - "8888:8888"
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token='' --NotebookApp.password=''
 
+  # Streamlit Web UI (same image, jobs = subprocess to run_isp / tokenize / finetune / isp_umap):
+  #   docker compose up -d webui
+  #   http://localhost:8501
+  webui:
+    <<: *geneformer-base
+    container_name: mouse_geneformer_webui
+    ports:
+      - "8501:8501"
+    environment:
+      - WANDB_DISABLED=true
+    command:
+      - streamlit
+      - run
+      - /app/streamlit_app/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --browser.gatherUsageStats=false
+
   # One-shot ISP run: docker compose run --rm isp
   # (uses the same image as mouse-geneformer; build that image first: docker compose build mouse-geneformer)
   isp:
