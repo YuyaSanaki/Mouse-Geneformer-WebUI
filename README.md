@@ -29,7 +29,7 @@ Code modification and primary testing is on a **DGX Spark (aarch64)**. x86\_64 N
    git lfs pull
    ```
 
-3. **Build the Docker image** used by Jupyter, ISP, and tokenization (same image for all Compose services):
+3. **Build the Docker image** used by Jupyter, Streamlit web UI, ISP, and tokenization (same image for all Compose services):
    ```bash
    docker compose build mouse-geneformer
    ```
@@ -207,6 +207,19 @@ juoyter notebooks were not fully edited to match docker compose services.
 docker compose up -d mouse-geneformer
 # Jupyter: http://localhost:8888
 ```
+
+## Streamlit Web UI (same container image as CLI)
+
+The `webui` service runs [Streamlit](https://streamlit.io/) in the **same** `mouse-geneformer` image. Jobs started from the browser execute as **subprocesses** in that container (`accelerate launch … run_isp.py`, `execute_tokenizer_pipeline.py`, etc.), matching the CLI entrypoints.
+
+```bash
+docker compose build mouse-geneformer
+docker compose up -d webui
+# UI: http://localhost:8501
+```
+
+Uploads and per-run configs/logs are written under `data/streamlit_workspace/` (ignored when `data/` is not tracked). Set `WEBUI_ROOT` or `WEBUI_WORKSPACE` in the service environment if you need non-default paths.
+
 ### 1. in silico pertubation jupyter notebook edit done
     docker compose up to open jupyterlab
     open in_silico_perturbation.ipynb
