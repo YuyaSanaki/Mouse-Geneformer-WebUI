@@ -176,7 +176,7 @@ Implementation: [`run_finetune.py`](run_finetune.py), [`config/finetune.yaml`](c
 
 For the details, see [**docs/isp_umap.md**](docs/isp_umap.md) (end-to-end info about the visual trajectory analysis generated).
 
-[`run_isp_umap.py`](run_isp_umap.py) reads [`config/isp_umap.yaml`](config/isp_umap.yaml). It leverages your tokenized dataset and fine-tuned model to simulate an in-silico gene perturbation (e.g. `Igfbp2`) locally and pushes the data back through manually to evaluate internal embeddings shifts via UMAP.
+[`run_isp_umap.py`](run_isp_umap.py) reads [`config/isp_umap.yaml`](config/isp_umap.yaml). It leverages your tokenized dataset and fine-tuned model to simulate an in-silico gene perturbation (e.g. `Igfbp2`) locally, writes **`per_cell_isp_shift.csv`** (how much each start-state cell moved), and plots embedding trajectories via UMAP.
 
 1. **Configure** [`config/isp_umap.yaml`](config/isp_umap.yaml):
     - Set the `gene_to_perturb` (supports symbols like `Igfbp2` or explicit Ensembl IDs)
@@ -188,6 +188,7 @@ docker compose run --rm isp_umap
 
 | Artifact | Location | Role |
 |----------|----------|------|
+| `per_cell_isp_shift.csv` | `output/{DATE}/isp_umap_{UTC}/` | Per-cell embedding/UMAP shift after ISP (see [docs/isp_umap.md](docs/isp_umap.md)) |
 | `umap_*.png` | `output/{DATE}/isp_umap_{UTC}/` | Seaborn trajectory visualization graphic |
 | `[STATE]_embs.npy` | same | Raw extracted intermediate embeddings arrays exported for standalone notebooks |
 
