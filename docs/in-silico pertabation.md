@@ -173,6 +173,25 @@ Alternative with Jupyter container already up:
 - **Figures + table exports:** after stats, `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) (same logic as [`isp_analysis.ipynb`](../isp_analysis.ipynb)): PNGs under **`{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]figures/`** (e.g. `shift_distribution.png`, `volcano_plot.png`, `top_genes_barplot.png`, `waterfall_plot.png`); CSV summaries stay next to the parquet in `ispstats_results`. Disable with `analysis.enabled: false` in `isp.yaml` or `--skip-analysis`.
 - **Run log + provenance (per run folder):** `isp_run.log` (rotating text log of stdout/stderr from `run_isp.py` on the **main** process only), plus `isp_config_used.yaml` and `isp_run_metadata.yaml`, under the same `isp_<UTC>/` directory as results when time subdirs are enabled. Tokenization writes analogous files under `data.output_dir` (`tokenize_run.log`, `tokenize_config_used.yaml`, `tokenize_run_metadata.yaml`). See **[README.md § Run provenance and logs](../README.md#run-provenance-config-summary-and-rotating-logs-isp)** for behavior, rotation, and env vars (`ISP_LOG_*`, `TOKENIZE_LOG_*`, disable flags).
 
+### Per-cell perturbation shift (ISP UMAP service)
+
+Standard ISP ranks **genes** by population-level shift. To quantify **how much each individual cell** moves under a chosen gene perturbation (e.g. Igfbp2 delete in AD cells), use the separate **ISP UMAP** service — see [**isp_umap.md**](isp_umap.md).
+
+```bash
+docker compose run --rm isp_umap
+```
+
+Each run writes **`per_cell_isp_shift.csv`** under `output/<DATE>/isp_umap_<UTC>/`. One row per start-state cell (e.g. each AD cell in the run), including:
+
+| Column | Meaning |
+|--------|---------|
+| `shift_l2` | L2 distance between embeddings before vs after in-silico perturbation (primary “how perturbed is this cell?” metric in model space) |
+| `shift_toward_<end_state>` | Reduction in distance to the end-state centroid (e.g. WT); positive = moved closer to that reference |
+| `umap1_before` / `umap2_before`, `umap1_after` / `umap2_after` | UMAP coordinates before and after (same cells as the grey arrows on `umap_*.png`) |
+| `umap_shift_l2` | L2 distance moved on the UMAP |
+
+Tokenized metadata columns on the dataset (e.g. `sample_id`, `disease`) are copied into the CSV so you can join **cell-type labels later** (after classification) and rank which types are most sensitive. Configure via [`config/isp_umap.yaml`](../config/isp_umap.yaml); script: [`run_isp_umap.py`](../run_isp_umap.py).
+
 ---
 
 ## Do I need a new `.dataset`?

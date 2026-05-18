@@ -1,6 +1,8 @@
 # in-sillico perturbation visualization on UMAP Plot Service
 
-The **ISP UMAP** service calculates and visualizes the topological changes of perturbed cell embeddings in UMAP space. Unlike the mathematical cosine-similarity shift measured by the standard ISP scripts, this tool provides a visual representation of how the perturbation of a specific gene moves individual cells across conditions.
+The **ISP UMAP** service calculates and visualizes how **each cell** moves when a single gene is perturbed in silico. Unlike standard ISP (gene-level ranking via cosine similarity across the cohort), this service exports **per-cell shift metrics** and a UMAP trajectory plot for one target gene at a time.
+
+**Core output:** [`per_cell_isp_shift.csv`](#3-per-cell-shift-table-per_cell_isp_shiftcsv) — one row per start-state cell (e.g. AD) with `shift_l2` (embedding-space perturbation magnitude), `shift_toward_<end_state>` (movement toward e.g. WT), and UMAP before/after coordinates. Use this table to identify which cells (and later, which cell types after you join annotations) are most affected by the perturbation.
 
 ## Configuration
 
@@ -33,6 +35,12 @@ docker compose run --rm isp_umap
 
 All generated assets are safely routed to the `output/[DATE]/isp_umap_[UTC TIME]` directory.
 
+| File | Role |
+|------|------|
+| **`per_cell_isp_shift.csv`** | **Essential:** per-cell perturbation magnitude and direction (see below) |
+| `umap_*.png` | Visual summary; grey arrows = same cells as `umap_shift_l2` in the CSV |
+| `*_embs.npy` | Raw embedding matrices for custom downstream analysis |
+
 ### 1. UMAP Figure (`umap_*.png`)
 A visually distinct seaborn scatterplot comparing:
 - Target State cells (e.g. `WT` in blue)
@@ -43,6 +51,19 @@ Grey arrows signify the individual trajectory lines map tracking the progression
 
 ### 2. Raw Embeddings arrays (`*.npy`)
 The script exports native `.npy` representations of your intermediate matrix spaces (`WT_embs.npy`, `AD_embs.npy`, `AD_ISP..._.npy`) so that you can reuse them if you perform downstream tasks inside of Jupyter.
+
+### 3. Per-cell shift table (`per_cell_isp_shift.csv`)
+One row per **start-state** cell (e.g. each AD cell in the run), with how much that cell moved under ISP:
+
+| Column | Meaning |
+|--------|---------|
+| `shift_l2` | L2 distance between embeddings before vs after perturbation (larger = more perturbed in model space) |
+| `shift_toward_<end_state>` | Reduction in distance to the end-state (e.g. WT) centroid; positive values move closer to that reference |
+| `umap1_before` / `umap2_before` | UMAP position before perturbation |
+| `umap1_after` / `umap2_after` | UMAP position after perturbation |
+| `umap_shift_l2` | L2 distance between before/after positions in UMAP space (matches the grey arrows on the plot) |
+
+Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `disease`) are included so you can join cell-type labels later after classification.
 
 ## Troubleshooting
 

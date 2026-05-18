@@ -59,6 +59,51 @@ def extract_embeddings(model, dataset, device, batch_size, pad_token_id):
         return np.array([])
     return np.concatenate(all_embs, axis=0)
 
+_SKIP_METADATA_COLS = frozenset({"input_ids", "length", "attention_mask"})
+
+def compute_per_cell_shifts(start_embs, pert_embs, end_embs):
+    """L2 shift in embedding space and reduction in distance to the end-state centroid."""
+    shift_l2 = np.linalg.norm(pert_embs - start_embs, axis=1)
+    end_centroid = end_embs.mean(axis=0)
+    dist_before = np.linalg.norm(start_embs - end_centroid, axis=1)
+    dist_after = np.linalg.norm(pert_embs - end_centroid, axis=1)
+    shift_toward_end = dist_before - dist_after
+    return shift_l2, shift_toward_end
+
+def build_per_cell_shift_table(
+    start_dataset,
+    start_embs,
+    pert_embs,
+    end_embs,
+    end_state,
+    umap_coords=None,
+    start_umap_offset=0,
+):
+    """One row per perturbed start-state cell with shift metrics (and optional UMAP coords)."""
+    shift_l2, shift_toward_end = compute_per_cell_shifts(start_embs, pert_embs, end_embs)
+    toward_col = f"shift_toward_{end_state}"
+
+    meta = {
+        c: start_dataset[c]
+        for c in start_dataset.column_names
+        if c not in _SKIP_METADATA_COLS
+    }
+    meta["cell_index"] = list(range(len(start_dataset)))
+    meta["shift_l2"] = shift_l2
+    meta[toward_col] = shift_toward_end
+
+    if umap_coords is not None:
+        n = len(start_embs)
+        before = umap_coords[start_umap_offset : start_umap_offset + n]
+        after = umap_coords[start_umap_offset + n : start_umap_offset + 2 * n]
+        meta["umap1_before"] = before[:, 0]
+        meta["umap2_before"] = before[:, 1]
+        meta["umap1_after"] = after[:, 0]
+        meta["umap2_after"] = after[:, 1]
+        meta["umap_shift_l2"] = np.linalg.norm(after - before, axis=1)
+
+    return pd.DataFrame(meta)
+
 def main():
     parser = argparse.ArgumentParser(description="ISP UMAP Plotter")
     default_cfg = os.environ.get("ISP_UMAP_CONFIG", "/app/config/isp_umap.yaml")
@@ -211,6 +256,24 @@ def main():
 
     df = pd.DataFrame(umap_embs, columns=["UMAP 1", "UMAP 2"])
     df["State"] = labels
+
+    per_cell_df = build_per_cell_shift_table(
+        start_dataset,
+        start_embs,
+        pert_start_embs,
+        end_embs,
+        end_state,
+        umap_coords=umap_embs,
+        start_umap_offset=len(end_embs),
+    )
+    per_cell_path = out_dir / "per_cell_isp_shift.csv"
+    per_cell_df.to_csv(per_cell_path, index=False)
+    logger.info(
+        "Saved per-cell shift metrics to %s (%d cells; columns: shift_l2, shift_toward_%s, umap_shift_l2)",
+        per_cell_path,
+        len(per_cell_df),
+        end_state,
+    )
 
     # 8. Plot Generation
     logger.info("Rendering visual plot...")
