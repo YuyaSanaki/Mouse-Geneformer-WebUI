@@ -12,7 +12,7 @@ The pretrained Mouse-Geneformer has **general-purpose** cell embeddings learned 
 
 | Use case | What fine-tuning does |
 |----------|----------------------|
-| **Disease classification** (WT vs AD) | Embeddings learn to separate disease states — ISP then identifies genes whose perturbation shifts cells between states |
+| **Disease classification** (Ctrl vs Disease) | Embeddings learn to separate disease states — ISP then identifies genes whose perturbation shifts cells between states |
 | **Cell type classification** | Embeddings learn cell-type boundaries — ISP then identifies cell-type-defining genes |
 
 ### Pipeline flow
@@ -29,13 +29,13 @@ Without fine-tuning, ISP uses the pretrained model (`model.type: Pretrained`). A
 
 Before fine-tuning you need:
 
-1. **A tokenized `.dataset`** — produced by the tokenize service (see [in-silico pertabation.md](in-silico%20pertabation.md) §2–3). The dataset must have:
+1. **A tokenized `.dataset`** — produced by the tokenize service (see [tokenization.md](tokenization.md)). The dataset must have:
 
    | Column | Required? | Notes |
    |--------|-----------|-------|
    | `input_ids` | **Yes** | Rank-encoded gene tokens per cell |
    | `length` | **Yes** | Sequence length |
-   | Label column | **Yes** | E.g. `disease` (with values like `WT`, `AD`) or `cell_type` |
+   | Label column | **Yes** | E.g. `disease` (with values like `Ctrl`, `Disease`) or `cell_type` |
    | Organ/group column | Optional | E.g. `organ_major` — used for per-organ fine-tuning |
 
 2. **The pretrained model** — default: `/app/models/mouse-Geneformer/` (contains `config.json`, `pytorch_model.bin`).
@@ -56,7 +56,7 @@ The config has six sections. Here is each with explanation:
 
 ```yaml
 paths:
-  dataset: /app/data/PIPseq/tokenized_dataset/PIPseq_0.dataset
+  dataset: /app/data/MyStudy/tokenized_dataset/MyStudy_0.dataset
   geneformer_model: /app/models/mouse-Geneformer/
   output_root: /app/output
   output_time_subdir: true
@@ -88,8 +88,8 @@ metadata:
   #   cell_type:
   #     source: genotype
   #     mapping:
-  #       WT: wild_type
-  #       AD: alzheimer
+  #       Ctrl: control
+  #       Disease: disease_model
 ```
 
 | Operation | When to use | Example |
@@ -227,12 +227,6 @@ This executes `python3 /app/run_finetune.py --config /app/config/finetune.yaml` 
 docker compose run --rm finetune python3 /app/run_finetune.py --config /app/config/my_custom_finetune.yaml
 ```
 
-### With Jupyter container already running
-
-```bash
-docker exec -it mouse_geneformer_container python3 /app/run_finetune.py --config /app/config/finetune.yaml
-```
-
 ---
 
 ## 5. Outputs
@@ -249,7 +243,7 @@ output/20260410/finetune_034500_123456Z/
 │   ├── config.json                 # Model config (for BertForSequenceClassification)
 │   ├── model.safetensors           # Fine-tuned model weights
 │   ├── training_args.bin           # HuggingFace TrainingArguments
-│   ├── label_dict.json             # { "WT": 0, "AD": 1 }
+│   ├── label_dict.json             # { "Ctrl": 0, "Disease": 1 }
 │   ├── results.csv                 # True vs Predicted labels
 │   ├── eval_results.json           # Accuracy, precision, recall, macro-F1
 │   ├── preds.pkl                   # Full predictions object (pickle)
@@ -311,8 +305,8 @@ The fine-tuned model directory contains `label_dict.json` which maps class names
 
 ```json
 {
-  "WT": 0,
-  "AD": 1
+  "Ctrl": 0,
+  "Disease": 1
 }
 ```
 

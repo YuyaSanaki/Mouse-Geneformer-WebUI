@@ -58,7 +58,6 @@ provenance:
   fingerprint_fast: true
 
 runtime:
-  # GPU minibatch for transformer forwards; raise until below OOM.
+  # Standalone ISP defaults; E2E pipeline overrides via config/pipeline.yaml runtime.*
   forward_batch_size: 100
-  # HuggingFace datasets map/filter CPU workers.
   nproc: 16

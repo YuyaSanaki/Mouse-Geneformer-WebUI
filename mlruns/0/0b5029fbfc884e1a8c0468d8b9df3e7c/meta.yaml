@@ -1,0 +1,14 @@
+artifact_uri: file:///app/mlruns/0/0b5029fbfc884e1a8c0468d8b9df3e7c/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 0b5029fbfc884e1a8c0468d8b9df3e7c
+run_name: capable-auk-759
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779699148575
+status: 1
+tags: []
+user_id: ubuntu

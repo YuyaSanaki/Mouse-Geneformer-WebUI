@@ -3,8 +3,9 @@ In-silico perturbation driver (notebook logic as a script).
 
 Configuration: YAML file (default /app/config/isp.yaml). Override path with --config or ISP_CONFIG.
 CLI --forward-batch-size / --nproc override the YAML runtime section when passed.
-Outputs: with paths.output_root, writes to {output_root}/{YYYYMMDD}/[run_folder/]isp_results and .../ispstats_results (date: --output-date, ISP_OUTPUT_DATE, or today).
-By default (paths.output_time_subdir true) run_folder is run_<UTC HHMMSS>_<microseconds>Z from process start, so same-day runs do not collide; disabled with paths.output_time_subdir false, ISP_OUTPUT_TIME_SUBDIR=0, or --no-output-time-subdir (then outputs sit directly under the date folder).
+Outputs: with paths.output_root, writes to {output_root}/[{YYYYMMDD}/][run_folder/]isp_results and .../ispstats_results.
+Date folder (default on): --output-date, ISP_OUTPUT_DATE, or today; disable with paths.output_date_subdir false, ISP_OUTPUT_DATE_SUBDIR=0, or --no-output-date-subdir.
+Time folder (default on): run_<UTC HHMMSS>_<microseconds>Z under the date (or output_root) folder; disable with paths.output_time_subdir false, ISP_OUTPUT_TIME_SUBDIR=0, or --no-output-time-subdir.
 Explicit output_subdir (paths.output_subdir, ISP_OUTPUT_SUBDIR, --output-subdir) overrides the time folder with a fixed name.
 Also writes {output_root}/{YYYYMMDD}/[run_folder/]isp_run.log (rotating; env ISP_LOG_MAX_BYTES, ISP_LOG_BACKUP_COUNT; ISP_DISABLE_RUN_LOG=1 to skip) mirroring stdout/stderr on the main process only.
 Optional ISP_FINGERPRINT_INPUTS=1: SHA-256 content fingerprints of paths.dataset and paths.geneformer_model are printed and stored in isp_run_metadata.yaml (can be slow for large trees).
@@ -62,6 +63,25 @@ def _resolve_output_subdir(
             "Set paths.output_subdir, ISP_OUTPUT_SUBDIR, or --output-subdir (e.g. run1, batch_a)."
         )
     return raw
+
+
+def _want_date_subdir(
+    paths_cfg: Mapping[str, Any] | None,
+    env_raw: str | None,
+    cli_disable: bool,
+) -> bool:
+    """Default True: insert {YYYYMMDD} under paths.output_root unless disabled."""
+    if cli_disable:
+        return False
+    s = (env_raw or "").strip().lower()
+    if s in ("0", "false", "no", "off"):
+        return False
+    if s in ("1", "true", "yes", "on"):
+        return True
+    v = _deep_get(paths_cfg, "output_date_subdir", default=True)
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
 
 
 def _want_auto_time_subdir(
@@ -255,6 +275,11 @@ def main() -> None:
         help="Write isp_results directly under output_root/DATE (no default run_<UTC time> folder).",
     )
     p.add_argument(
+        "--no-output-date-subdir",
+        action="store_true",
+        help="Write isp_results directly under paths.output_root (no {YYYYMMDD} folder).",
+    )
+    p.add_argument(
         "--skip-analysis",
         action="store_true",
         help="Skip isp_analysis.py figures/tables after stats.",
@@ -281,14 +306,21 @@ def main() -> None:
     date_used: str | None = None
     run_root: Path | None = None
     if output_root:
-        date_used = (
-            (args.output_date or os.environ.get("ISP_OUTPUT_DATE") or datetime.now().strftime("%Y%m%d")).strip()
+        use_date_subdir = _want_date_subdir(
+            paths,
+            os.environ.get("ISP_OUTPUT_DATE_SUBDIR"),
+            args.no_output_date_subdir,
         )
-        if len(date_used) != 8 or not date_used.isdigit():
-            raise ValueError(
-                "output date must be YYYYMMDD (8 digits). "
-                "Set --output-date, ISP_OUTPUT_DATE, or use default today."
-            )
+        date_used = None
+        if use_date_subdir:
+            date_used = (
+                args.output_date or os.environ.get("ISP_OUTPUT_DATE") or datetime.now().strftime("%Y%m%d")
+            ).strip()
+            if len(date_used) != 8 or not date_used.isdigit():
+                raise ValueError(
+                    "output date must be YYYYMMDD (8 digits). "
+                    "Set --output-date, ISP_OUTPUT_DATE, or use default today."
+                )
         explicit_subdir = _resolve_output_subdir(
             args.output_subdir,
             os.environ.get("ISP_OUTPUT_SUBDIR"),
@@ -307,7 +339,9 @@ def main() -> None:
             if accelerator.is_main_process:
                 proposed = _utc_run_folder_name(datetime.now(timezone.utc))
             run_folder = _broadcast_run_folder_from_main(accelerator, proposed)
-        run_root = Path(output_root) / date_used
+        run_root = Path(output_root)
+        if use_date_subdir and date_used:
+            run_root = run_root / date_used
         if run_folder:
             run_root = run_root / run_folder
         isp_out = os.path.join(str(run_root), "isp_results")
@@ -404,8 +438,10 @@ def main() -> None:
             banner_run_folder = "(legacy paths)"
         elif run_folder:
             banner_run_folder = run_folder
-        else:
+        elif date_used:
             banner_run_folder = "(flat under date)"
+        else:
+            banner_run_folder = "(flat under output_root)"
         banner = format_isp_run_banner(
             cfg,
             extras={
@@ -451,8 +487,11 @@ def main() -> None:
         nproc=nproc,
     )
 
-    if output_root and date_used:
-        print(f"Output root: {output_root}  (date {date_used})")
+    if output_root:
+        if date_used:
+            print(f"Output root: {output_root}  (date {date_used})")
+        else:
+            print(f"Output root: {output_root}  (no date subfolder)")
         print(f"  → ISP results: {isp_out}")
         print(f"  → ISP stats:   {stats_out}")
 

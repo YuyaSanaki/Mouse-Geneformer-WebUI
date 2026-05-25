@@ -1,0 +1,52 @@
+# =============================================================================
+# End-to-end pipeline: Tokenize → Fine-tune → ISP
+# Run: docker compose run --rm pipeline
+# Override: PIPELINE_CONFIG=/path/to/pipeline.yaml
+# =============================================================================
+#
+# Layout: /data/ExperimentName/Time-Condition-Replicate/barcodes.tsv.gz (+ features, matrix)
+# data.input_dir = /app/data/ExperimentName/ (one experiment) or /app/data/ (many).
+# Paths below are derived under {paths.output_root}/{YYYYMMDD}/pipeline_<UTC>/:
+#   tokenized_dataset/{study_name}_0.dataset
+#   finetune/all_run1/          (checkpoint for ISP)
+#   isp_results/                (ISP outputs directly under the pipeline run folder)
+#
+# Optional: override any section via stages.tokenize / finetune / isp
+# (merged onto config/tokenize.yaml, finetune.yaml, isp.yaml).
+
+data:
+  # "single-cell" (barcodes/features/matrix) or "loom"
+  input_type: single-cell 
+  input_dir: "/app/data/MyExperiment/"
+  # null = basename of input_dir (e.g. example_mouse_study)
+  output_prefix: null
+
+paths:
+  output_root: /app/output
+  pretrained_model: /app/models/mouse-Geneformer/
+
+# Applied to tokenize, fine-tune, and ISP stage configs (overrides config/*.yaml defaults).
+runtime:
+  nproc: 16
+  max_cells: 300000              # tokenize: tokenizer.max_cells
+  forward_batch_size: 100        # ISP: runtime.forward_batch_size
+
+# ISP perturbation (copied into stage ISP config; same as config/isp.yaml)
+perturbation:
+  type: delete  # delete | overexpress | inhibit | activate
+  # "delete": delete gene from rank value encoding
+  # "overexpress": move gene to front of rank value encoding
+  # "inhibit": move gene to lower quartile of rank value encoding
+  # "activate": move gene to higher quartile of rank value encoding
+  organ_data: null
+  state_key: disease
+  start_state: Disease
+  end_state: WT
+  alt_states: []
+  genes_to_perturb: []
+
+# Per-stage overrides (optional; merged onto default stage YAML templates)
+stages:
+  tokenize: {}
+  finetune: {}
+  isp: {}

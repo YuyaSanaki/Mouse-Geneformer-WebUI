@@ -7,9 +7,8 @@ from __future__ import annotations
 
 import io
 import os
-import shlex
 import subprocess
-import textwrap
+import sys
 import time
 import uuid
 import zipfile
@@ -19,14 +18,69 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-# Repository root: Docker WORKDIR is /app; local dev uses current working directory.
-ROOT = Path(os.environ.get("WEBUI_ROOT", os.getcwd())).resolve()
+def _repo_root() -> Path:
+    """Repo root (contains streamlit_upload.py, data_input_layout.py)."""
+    env = os.environ.get("WEBUI_ROOT")
+    if env:
+        return Path(env).resolve()
+    # streamlit run .../streamlit_app/app.py often sets cwd to streamlit_app/, not /app
+    candidate = Path(__file__).resolve().parent.parent
+    if (candidate / "streamlit_upload.py").is_file():
+        return candidate
+    return Path(os.getcwd()).resolve()
+
+
+ROOT = _repo_root()
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+def _import_data_input_layout():
+    """Load data_input_layout from repo root (avoids stale sys.modules / wrong path)."""
+    import importlib.util
+
+    path = ROOT / "data_input_layout.py"
+    if not path.is_file():
+        raise ImportError(f"Missing {path}")
+    spec = importlib.util.spec_from_file_location("data_input_layout", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module spec for {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["data_input_layout"] = mod
+    spec.loader.exec_module(mod)
+    required = (
+        "count_single_cell_samples",
+        "diagnose_input_dir",
+        "resolve_single_cell_input_dir",
+    )
+    missing = [n for n in required if not hasattr(mod, n)]
+    if missing:
+        raise ImportError(
+            f"{path} is outdated (missing {', '.join(missing)}). "
+            "Restart the webui container after updating the repo."
+        )
+    return mod
+
+
+_dil = _import_data_input_layout()
+count_single_cell_samples = _dil.count_single_cell_samples
+diagnose_input_dir = _dil.diagnose_input_dir
+resolve_single_cell_input_dir = _dil.resolve_single_cell_input_dir
+unique_states_from_samples = _dil.unique_states_from_samples
+
+from streamlit_upload import (
+    import_study_zip,
+    normalize_study_name,
+    resolve_study_tokenize_dir,
+    study_folder,
+    summarize_existing_study,
+)
+
+discover_sample_dirs = _dil.discover_sample_dirs
 WORKSPACE = Path(os.environ.get("WEBUI_WORKSPACE", ROOT / "data" / "streamlit_workspace")).resolve()
 
 RUN_FILES = {
-    "ISP": "isp.yaml",
-    "Tokenize": "tokenize.yaml",
-    "Fine-tune": "finetune.yaml",
+    "Pipeline (E2E)": "pipeline.yaml",
     "ISP UMAP": "isp_umap.yaml",
 }
 
@@ -36,12 +90,14 @@ def _default_config_path(run_label: str) -> Path:
 
 
 def _load_default_yaml() -> None:
-    name = st.session_state.get("run_type_sel", "ISP")
+    name = st.session_state.get("run_type_sel", "Pipeline (E2E)")
     path = _default_config_path(name)
     if path.is_file():
         st.session_state["yaml_editor"] = path.read_text(encoding="utf-8")
     else:
         st.session_state["yaml_editor"] = f"# Missing file: {path}\n"
+    if name == "Pipeline (E2E)":
+        _sync_pipeline_form_from_yaml(_session_upload_dir())
 
 
 def _ensure_workspace() -> Path:
@@ -54,20 +110,6 @@ def _session_upload_dir() -> Path:
     d = _ensure_workspace() / "uploads" / sid
     d.mkdir(parents=True, exist_ok=True)
     return d
-
-
-def _safe_extract_zip(zbytes: bytes, dest: Path) -> Path:
-    dest = dest.resolve()
-    dest.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(zbytes)) as zf:
-        for member in zf.infolist():
-            if member.is_dir():
-                continue
-            target = (dest / member.filename).resolve()
-            if dest not in target.parents and target != dest:
-                raise ValueError(f"Unsafe path in zip: {member.filename}")
-        zf.extractall(dest)
-    return dest
 
 
 def _tail_log(path: Path, max_bytes: int = 64_000) -> str:
@@ -84,26 +126,13 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
     env = os.environ.copy()
     env.setdefault("WANDB_DISABLED", "true")
 
-    if run_label == "ISP":
-        nproc = os.environ.get("ISP_NUM_GPUS", "1")
-        cmd = [
-            "accelerate",
-            "launch",
-            "--num_processes",
-            str(nproc),
-            str(ROOT / "run_isp.py"),
-            "--config",
-            cfg,
-        ]
-    elif run_label == "Tokenize":
-        cmd = ["python3", str(ROOT / "execute_tokenizer_pipeline.py")]
-        env["TOKENIZE_CONFIG"] = cfg
-    elif run_label == "Fine-tune":
-        cmd = ["python3", str(ROOT / "run_finetune.py"), "--config", cfg]
-        env["FINETUNE_CONFIG"] = cfg
-    elif run_label == "ISP UMAP":
+    if run_label == "ISP UMAP":
         cmd = ["python3", str(ROOT / "run_isp_umap.py"), "--config", cfg]
         env["ISP_UMAP_CONFIG"] = cfg
+    elif run_label == "Pipeline (E2E)":
+        cmd = ["python3", str(ROOT / "run_pipeline.py"), "--config", cfg]
+        env["PIPELINE_CONFIG"] = cfg
+        env.setdefault("ISP_NUM_GPUS", os.environ.get("ISP_NUM_GPUS", "1"))
     else:
         raise ValueError(run_label)
     return cmd, env
@@ -111,17 +140,384 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
 
 def _guess_output_roots(run_label: str, cfg: dict) -> list[Path]:
     roots: list[Path] = []
-    if run_label == "Tokenize":
-        data = cfg.get("data") or {}
-        if data.get("output_dir"):
-            roots.append(Path(str(data["output_dir"])))
-    elif run_label in ("ISP", "Fine-tune"):
-        paths = cfg.get("paths") or {}
-        if paths.get("output_root"):
-            roots.append(Path(str(paths["output_root"])))
-    elif run_label == "ISP UMAP":
+    if run_label == "ISP UMAP":
         roots.append(ROOT / "output")
+    elif run_label == "Pipeline (E2E)":
+        paths = cfg.get("paths") or {}
+        out_root = paths.get("output_root")
+        if out_root:
+            roots.append(Path(str(out_root)))
+        roots.extend(_latest_pipeline_run_dirs(paths.get("output_root") or "/app/output"))
     return roots
+
+
+_FIGURE_SUFFIXES = frozenset({".png", ".pdf", ".svg", ".jpg", ".jpeg", ".webp"})
+
+
+def _list_figure_files(directory: Path) -> list[Path]:
+    directory = directory.resolve()
+    if not directory.is_dir():
+        return []
+    return sorted(
+        p
+        for p in directory.rglob("*")
+        if p.is_file() and p.suffix.lower() in _FIGURE_SUFFIXES
+    )
+
+
+def _discover_figures_dirs(roots: list[str | Path], run_label: str) -> list[Path]:
+    """Find figures/ (or ISP UMAP PNGs) under recent run folders."""
+    found: list[Path] = []
+    seen: set[str] = set()
+
+    def add(fig_dir: Path) -> None:
+        key = str(fig_dir.resolve())
+        if key in seen:
+            return
+        if _list_figure_files(fig_dir):
+            seen.add(key)
+            found.append(fig_dir)
+
+    for raw in roots:
+        root = Path(raw)
+        if not root.is_dir():
+            continue
+        if root.name.startswith(("pipeline_", "isp_")):
+            add(root / "figures")
+            if run_label == "ISP UMAP":
+                umaps = [p for p in root.glob("umap_*.png") if p.is_file()]
+                if umaps:
+                    add(root)
+            continue
+        for fig_dir in root.rglob("figures"):
+            if fig_dir.is_dir() and fig_dir.parent.name.startswith(
+                ("pipeline_", "isp_", "finetune_")
+            ):
+                add(fig_dir)
+        if run_label == "ISP UMAP":
+            for run_dir in sorted(
+                root.glob("**/isp_umap_*"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )[:3]:
+                if run_dir.is_dir() and list(run_dir.glob("umap_*.png")):
+                    add(run_dir)
+
+    found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return found
+
+
+def _build_figures_zip(fig_dirs: list[Path]) -> tuple[bytes, str] | None:
+    """Zip all figure files; arcnames include run folder for clarity."""
+    entries: list[tuple[Path, str]] = []
+    for fig_dir in fig_dirs:
+        run_name = fig_dir.parent.name if fig_dir.name == "figures" else fig_dir.name
+        prefix = f"{run_name}/"
+        for fp in _list_figure_files(fig_dir):
+            try:
+                rel = fp.relative_to(fig_dir)
+            except ValueError:
+                rel = Path(fp.name)
+            entries.append((fp, f"{prefix}{rel.as_posix()}"))
+
+    if not entries:
+        return None
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp, arcname in entries:
+            zf.write(fp, arcname=arcname)
+
+    primary = fig_dirs[0].parent.name if fig_dirs[0].name == "figures" else fig_dirs[0].name
+    return buf.getvalue(), f"{primary}_figures.zip"
+
+
+def _latest_pipeline_run_dirs(output_root: str | Path, limit: int = 5) -> list[Path]:
+    """Newest pipeline_* folders under {output_root}/{YYYYMMDD}/."""
+    root = Path(str(output_root))
+    if not root.is_dir():
+        return []
+    found: list[Path] = []
+    for date_dir in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+        if not date_dir.is_dir() or len(date_dir.name) != 8 or not date_dir.name.isdigit():
+            continue
+        for run_dir in date_dir.glob("pipeline_*"):
+            if run_dir.is_dir():
+                found.append(run_dir)
+    found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return found[:limit]
+
+
+def _read_pipeline_yaml() -> dict:
+    text = st.session_state.get("yaml_editor", "")
+    try:
+        cfg = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _read_pipeline_data_fields() -> tuple[str, str | None]:
+    """Return (input_dir, output_prefix) from the YAML editor; output_prefix None if unset/null."""
+    cfg = _read_pipeline_yaml()
+    data = cfg.get("data") or {}
+    input_dir = str(data.get("input_dir") or "")
+    raw_prefix = data.get("output_prefix")
+    if raw_prefix is None or str(raw_prefix).strip().lower() in ("", "null"):
+        return input_dir, None
+    return input_dir, str(raw_prefix).strip()
+
+
+def _read_pipeline_perturbation() -> dict:
+    return _read_pipeline_yaml().get("perturbation") or {}
+
+
+def _display_input_dir_line(upload_dir: Path) -> str:
+    """Resolved data.input_dir for Run directory panel (YAML / session after Apply)."""
+    cfg = _read_pipeline_yaml()
+    from_yaml = str((cfg.get("data") or {}).get("input_dir") or "").strip()
+    if from_yaml:
+        return from_yaml
+    cached = st.session_state.get("pipeline_tokenize_dir")
+    if cached:
+        return str(cached)
+    tokenize_dir = _compute_tokenize_input_dir(upload_dir)
+    if tokenize_dir:
+        return str(tokenize_dir)
+    return ""
+
+
+def _display_output_root_line() -> str:
+    """paths.output_root from Config YAML (refreshes after Apply / editor edits)."""
+    paths = _read_pipeline_yaml().get("paths") or {}
+    raw = paths.get("output_root")
+    if raw is None or str(raw).strip().lower() in ("", "null"):
+        return "/app/output"
+    return str(raw).strip()
+
+
+def _newest_pipeline_run_since(output_root: str | Path, since_ts: float) -> Path | None:
+    """Newest pipeline_* folder under output_root created at or after since_ts (epoch)."""
+    for run_dir in _latest_pipeline_run_dirs(output_root, limit=30):
+        try:
+            if run_dir.stat().st_mtime >= since_ts:
+                return run_dir
+        except OSError:
+            continue
+    return None
+
+
+def _sync_pipeline_output_run_dir() -> None:
+    """Set pipeline_output_run_dir after Run job creates DATE/pipeline_<UTC>/."""
+    started = st.session_state.get("pipeline_job_started_ts")
+    if started is None or st.session_state.get("run_type_sel") != "Pipeline (E2E)":
+        return
+    found = _newest_pipeline_run_since(_display_output_root_line(), float(started))
+    if found is not None:
+        st.session_state["pipeline_output_run_dir"] = str(found.resolve())
+
+
+def _render_run_directory_input(upload_dir: Path, run_label: str) -> None:
+    """data.input_dir block (Pipeline only; call after YAML editor)."""
+    if run_label != "Pipeline (E2E)":
+        return
+    input_dir_line = _display_input_dir_line(upload_dir)
+    if input_dir_line:
+        st.code(f"data.input_dir (auto)\n{input_dir_line}", language="text")
+    else:
+        st.code("data.input_dir (auto)", language="text")
+
+
+def _render_run_directory_output(run_label: str) -> None:
+    """Pipeline run folder after Run job (call after YAML editor)."""
+    if run_label == "Pipeline (E2E)":
+        pipeline_run = st.session_state.get("pipeline_output_run_dir")
+        if pipeline_run:
+            st.code(f"pipeline run folder\n{pipeline_run}", language="text")
+        st.caption(
+            "**Run job** creates `<DATE>/pipeline_<UTC>/` under `paths.output_root` in Config YAML. "
+            "The run folder path appears here after the job starts."
+        )
+    else:
+        st.caption(
+            "ISP UMAP writes `<DATE>/isp_umap_<time>/` under `/app/output` when you **Run job**."
+        )
+
+
+def _default_isp_start_end(states: list[str]) -> tuple[str, str]:
+    if not states:
+        return "Disease", "Ctrl"
+    if len(states) == 1:
+        return states[0], states[0]
+    if "Disease" in states and "Ctrl" in states:
+        return "Disease", "Ctrl"
+    return states[0], states[1]
+
+
+def _sync_isp_state_selectors(
+    states: list[str] | None = None,
+    *,
+    force: bool = False,
+) -> None:
+    """Initialize ISP dropdown options; set values only if unset or force=True (new zip)."""
+    pert = _read_pipeline_perturbation()
+    detected = states if states is not None else st.session_state.get("pipeline_detected_states") or []
+    options = sorted({str(s) for s in detected if s} | {str(pert.get("start_state") or "")} | {str(pert.get("end_state") or "")} - {""})
+    if not options:
+        options = ["Disease", "Ctrl"]
+
+    default_start, default_end = _default_isp_start_end(detected)
+    start_val = str(pert.get("start_state") or default_start)
+    end_val = str(pert.get("end_state") or default_end)
+    if start_val not in options:
+        options = sorted(set(options) | {start_val})
+    if end_val not in options:
+        options = sorted(set(options) | {end_val})
+
+    st.session_state["pipeline_isp_state_options"] = options
+    if force or "pipeline_isp_start_state" not in st.session_state:
+        st.session_state["pipeline_isp_start_state"] = start_val
+    if force or "pipeline_isp_end_state" not in st.session_state:
+        st.session_state["pipeline_isp_end_state"] = end_val
+
+
+def _zip_upload_fingerprint(uploaded_file) -> str:
+    return f"{uploaded_file.name}:{getattr(uploaded_file, 'size', 0)}"
+
+
+def _raw_study_name() -> str:
+    return str(st.session_state.get("pipeline_study_name") or "").strip()
+
+
+def _compute_tokenize_input_dir(upload_dir: Path) -> Path | None:
+    """Tokenize study root from fixed upload session + editable study name."""
+    return resolve_study_tokenize_dir(upload_dir, _raw_study_name())
+
+
+def _apply_study_settings_to_yaml(upload_dir: Path) -> bool:
+    """Write data.input_dir and output_prefix from study name (no manual path edit)."""
+    study_name = normalize_study_name(_raw_study_name())
+    if not study_name:
+        st.session_state["pipeline_set_input_msg"] = (
+            "warning",
+            "Enter an **experiment name** in Study name, then upload a .zip or click "
+            "**Apply setting to Config YAML**.",
+        )
+        return False
+    tokenize_dir = _compute_tokenize_input_dir(upload_dir)
+    if tokenize_dir is None:
+        target = study_folder(upload_dir, study_name)
+        hint = (
+            f"No Single-Cell data under `{target}`. Upload a .zip first, "
+            "or set **Study name** to match the folder created on import."
+        )
+        others = [
+            p.name
+            for p in sorted(upload_dir.iterdir())
+            if p.is_dir() and not p.name.startswith(".")
+        ]
+        if others:
+            hint += f" Folders in this session: `{', '.join(others)}`."
+        st.session_state["pipeline_set_input_msg"] = ("warning", hint)
+        return False
+    study_name = normalize_study_name(_raw_study_name())
+    states = unique_states_from_samples(tokenize_dir)
+    st.session_state["pipeline_detected_states"] = states
+    _patch_pipeline_yaml(
+        input_dir=tokenize_dir,
+        output_prefix=study_name,
+    )
+    st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
+    return True
+
+
+def _process_study_zip_upload(uploaded_file, upload_dir: Path) -> None:
+    """Import zip once; do not re-run on every widget rerun."""
+    buf = uploaded_file.getbuffer()
+    data = buf.getvalue() if hasattr(buf, "getvalue") else bytes(buf)
+    study_name = normalize_study_name(_raw_study_name())
+    tokenize_dir, summary = import_study_zip(data, upload_dir, _raw_study_name())
+    states = unique_states_from_samples(tokenize_dir)
+    st.session_state["pipeline_detected_states"] = states
+    st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
+    isp_start, isp_end = _default_isp_start_end(states)
+    _sync_isp_state_selectors(states, force=True)
+    _patch_pipeline_yaml(
+        input_dir=tokenize_dir,
+        output_prefix=study_name,
+        isp_start_state=isp_start,
+        isp_end_state=isp_end,
+    )
+    st.session_state["processed_zip_fingerprint"] = _zip_upload_fingerprint(uploaded_file)
+    st.success(f"Study **{study_name}** imported. `data.input_dir` → `{tokenize_dir}`")
+    st.markdown(summary)
+
+
+def _infer_study_name_from_yaml(upload_dir: Path) -> str:
+    input_dir, prefix = _read_pipeline_data_fields()
+    try:
+        rel = Path(input_dir).resolve().relative_to(upload_dir.resolve())
+        if rel.parts:
+            return rel.parts[0]
+    except ValueError:
+        pass
+    if prefix:
+        return str(prefix)
+    return ""
+
+
+def _sync_pipeline_form_from_yaml(upload_dir: Path) -> None:
+    """Initialize pipeline form fields from the current YAML editor text."""
+    if "pipeline_study_name" not in st.session_state:
+        st.session_state["pipeline_study_name"] = _infer_study_name_from_yaml(upload_dir)
+    tokenize_dir = _compute_tokenize_input_dir(upload_dir)
+    if tokenize_dir is not None:
+        st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
+
+
+def _detected_states_from_upload(upload_dir: Path) -> list[str]:
+    tokenize_dir = resolve_study_tokenize_dir(upload_dir, _raw_study_name())
+    if tokenize_dir is None:
+        return []
+    try:
+        return unique_states_from_samples(tokenize_dir)
+    except Exception:
+        return []
+
+
+def _patch_pipeline_yaml(
+    *,
+    input_dir: str | Path | None = None,
+    output_prefix: str | None = "__unset__",
+    isp_start_state: str | None = None,
+    isp_end_state: str | None = None,
+) -> bool:
+    """Patch pipeline YAML fields in the editor."""
+    cfg = _read_pipeline_yaml()
+    cfg.setdefault("data", {})
+    if input_dir is not None:
+        cfg["data"]["input_dir"] = str(input_dir)
+    if output_prefix != "__unset__":
+        cfg["data"]["output_prefix"] = output_prefix
+    if isp_start_state is not None or isp_end_state is not None:
+        cfg.setdefault("perturbation", {})
+        if isp_start_state is not None:
+            cfg["perturbation"]["start_state"] = isp_start_state
+            cfg["perturbation"]["organ_data"] = isp_start_state
+        if isp_end_state is not None:
+            cfg["perturbation"]["end_state"] = isp_end_state
+    dumped = yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    st.session_state["yaml_editor"] = dumped
+    if input_dir is not None:
+        st.session_state["pipeline_tokenize_dir"] = str(input_dir)
+    return True
+
+
+def _apply_isp_states_to_yaml() -> None:
+    _patch_pipeline_yaml(
+        isp_start_state=st.session_state.get("pipeline_isp_start_state"),
+        isp_end_state=st.session_state.get("pipeline_isp_end_state"),
+    )
 
 
 def _poll_active_job() -> None:
@@ -133,93 +529,157 @@ def _poll_active_job() -> None:
         st.session_state["active_proc"] = None
         st.session_state["last_exit_code"] = code
         st.session_state["last_job_finished_utc"] = datetime.now(timezone.utc).isoformat()
+        _sync_pipeline_output_run_dir()
+
+
+WEBUI_REPO_URL = "https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI"
 
 
 def main() -> None:
-    st.set_page_config(page_title="Mouse Geneformer", layout="wide")
-    st.title("Mouse Geneformer")
-    st.caption(
-        f"Repository root: `{ROOT}` · Workspace: `{WORKSPACE}` · "
-        "Jobs run in this container (subprocess), same code as CLI."
+    st.set_page_config(page_title="Mouse Geneformer WebUI", layout="wide")
+    st.title("Mouse Geneformer WebUI")
+    st.markdown(
+        f"[{WEBUI_REPO_URL}]({WEBUI_REPO_URL})",
     )
 
     _poll_active_job()
 
     upload_dir = _session_upload_dir()
+    st.session_state["upload_session_dir"] = str(upload_dir)
+    if "pipeline_study_name" not in st.session_state:
+        st.session_state["pipeline_study_name"] = _infer_study_name_from_yaml(upload_dir)
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.subheader("Data upload")
-        st.caption(
-            "Files are saved under the workspace. Upload limit is raised in `.streamlit/config.toml` "
-            "and Compose (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE`, default here ~1 TB). "
-            "For very large data, copying into the bind-mounted `data/` tree and pointing YAML at "
-            "that path avoids holding the whole file in RAM."
+        st.subheader("Study name")
+        st.text_input(
+            "Study name",
+            key="pipeline_study_name",
+            label_visibility="collapsed",
+            placeholder="Experiment name (e.g. MyExperiment)",
         )
-        uploaded = st.file_uploader("Upload", accept_multiple_files=True)
-        if uploaded:
-            for uf in uploaded:
-                out = upload_dir / uf.name
-                out.write_bytes(uf.getbuffer())
-                st.success(f"Saved `{out}`")
-            for uf in uploaded:
-                if uf.name.lower().endswith(".zip"):
-                    try:
-                        dest = upload_dir / uf.name.removesuffix(".zip")
-                        extracted = _safe_extract_zip(uf.getbuffer(), dest)
-                        st.info(
-                            f"Extracted zip to `{extracted}` — set `data.input_dir` "
-                            "(or loom paths) in YAML to this folder."
-                        )
-                    except (zipfile.BadZipFile, ValueError) as e:
-                        st.error(f"Zip error: {e}")
-        st.text_area("Upload directory (read-only)", value=str(upload_dir), height=68, disabled=True)
+        st.caption("Enter your **experiment name** before uploading a .zip (folder + `output_prefix`).")
+        st.subheader("Upload data.zip")
+        st.caption(
+            "Zip with compressed `/data/` sample subfolders named `Time-State-Suffix/` "
+            "(e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`). Each sample needs "
+            "`barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.tsv.gz`."
+        )
+        zip_upload = st.file_uploader(
+            "data.zip file",
+            type=["zip"],
+            label_visibility="collapsed",
+        )
+        if zip_upload is not None:
+            zip_fp = _zip_upload_fingerprint(zip_upload)
+            if st.session_state.get("processed_zip_fingerprint") != zip_fp:
+                try:
+                    _process_study_zip_upload(zip_upload, upload_dir)
+                except (zipfile.BadZipFile, ValueError) as e:
+                    st.error(str(e))
+                except Exception as e:
+                    st.error(f"Upload failed: {e}")
+        else:
+            study_name = normalize_study_name(_raw_study_name())
+            if study_name and study_folder(upload_dir, study_name).is_dir():
+                st.markdown(summarize_existing_study(upload_dir, study_name))
 
     with c2:
         st.subheader("Run type")
+        run_types = list(RUN_FILES.keys())
+        default_idx = run_types.index("Pipeline (E2E)") if "Pipeline (E2E)" in run_types else 0
         st.selectbox(
-            "Pipeline",
-            list(RUN_FILES.keys()),
+            "Run type",
+            run_types,
+            index=default_idx,
             key="run_type_sel",
+            label_visibility="collapsed",
             on_change=_load_default_yaml,
         )
         if "yaml_editor" not in st.session_state:
             _load_default_yaml()
-        st.markdown(
-            textwrap.dedent(
-                """
-                | Type | Script |
-                |------|--------|
-                | ISP | `run_isp.py` (via `accelerate launch`) |
-                | Tokenize | `execute_tokenizer_pipeline.py` |
-                | Fine-tune | `run_finetune.py` |
-                | ISP UMAP | `run_isp_umap.py` |
-                """
+        if st.session_state.get("run_type_sel") == "Pipeline (E2E)":
+            st.info(
+                "Runs **Tokenize → Fine-tune → ISP** in one job. Set paths and ISP states below "
+                "(or edit full YAML). Outputs under `{paths.output_root}/{DATE}/pipeline_<UTC>/`."
             )
-        )
+            _sync_pipeline_form_from_yaml(upload_dir)
+            upload_states = _detected_states_from_upload(upload_dir)
+            if upload_states:
+                st.session_state["pipeline_detected_states"] = upload_states
+            if "pipeline_isp_start_state" not in st.session_state:
+                _sync_isp_state_selectors(
+                    st.session_state.get("pipeline_detected_states"),
+                    force=False,
+                )
+            detected = st.session_state.get("pipeline_detected_states") or []
+            if detected:
+                st.caption(f"Detected states from sample folders: **{', '.join(detected)}**")
+            isp_options = st.session_state.get("pipeline_isp_state_options") or ["Disease", "Ctrl"]
+            c_start, c_end = st.columns(2)
+            with c_start:
+                st.selectbox(
+                    "ISP start_state",
+                    isp_options,
+                    key="pipeline_isp_start_state",
+                    on_change=_apply_isp_states_to_yaml,
+                    help="Perturb cells in this condition (writes `perturbation.start_state` to YAML).",
+                )
+            with c_end:
+                st.selectbox(
+                    "ISP end_state",
+                    isp_options,
+                    key="pipeline_isp_end_state",
+                    on_change=_apply_isp_states_to_yaml,
+                    help="Goal state for in-silico shift (writes `perturbation.end_state` to YAML).",
+                )
+            pert = _read_pipeline_perturbation()
+            st.caption(
+                f"ISP: start=`{pert.get('start_state', '')}` end=`{pert.get('end_state', '')}` "
+                "(updates when you change the dropdowns)"
+            )
+            if st.button("Apply setting to Config YAML", type="secondary"):
+                if _apply_study_settings_to_yaml(upload_dir):
+                    st.session_state["pipeline_set_input_msg"] = (
+                        "success",
+                        f"Applied settings for `{st.session_state['pipeline_study_name']}` to Config YAML.",
+                    )
+                st.rerun()
+            msg = st.session_state.pop("pipeline_set_input_msg", None)
+            if msg:
+                kind, text = msg
+                if kind == "success":
+                    st.success(text)
+                else:
+                    st.warning(text)
 
     with c3:
-        st.subheader("Run configuration")
-        st.caption(
-            "Edit YAML below. Paths are container paths (e.g. `/app/...`). "
-            "Reload defaults when switching run type."
-        )
+        st.subheader("Run directory")
+        run_input_slot = st.empty()
+        execute_slot = st.empty()
+        run_output_slot = st.empty()
         if st.button("Reset YAML to template on disk", type="secondary"):
             _load_default_yaml()
             st.rerun()
 
     st.text_area("YAML", key="yaml_editor", height=420)
 
-    st.subheader("Execute")
+    if st.session_state.get("active_proc") is not None:
+        _sync_pipeline_output_run_dir()
+
+    run_label = st.session_state.get("run_type_sel", "Pipeline (E2E)")
+    with run_input_slot.container():
+        _render_run_directory_input(upload_dir, run_label)
+
     proc = st.session_state.get("active_proc")
     busy = proc is not None and proc.poll() is None
-
-    col_run, col_cmd = st.columns([1, 2])
-    with col_run:
+    run_clicked = False
+    with execute_slot.container():
+        st.subheader("Execute")
         run_clicked = st.button("Run job", type="primary", disabled=busy)
-    with col_cmd:
-        if st.session_state.get("last_cmd_display"):
-            st.code(st.session_state["last_cmd_display"], language="bash")
+
+    with run_output_slot.container():
+        _render_run_directory_output(run_label)
 
     if run_clicked:
         yaml_text = st.session_state.get("yaml_editor", "")
@@ -248,19 +708,9 @@ def main() -> None:
                 st.session_state["last_run_dir"] = run_dir
                 st.session_state["last_output_roots"] = [str(p) for p in _guess_output_roots(run_label, cfg_obj)]
                 st.session_state["last_exit_code"] = None
-                st.session_state["last_cmd_display"] = " ".join(shlex.quote(c) for c in cmd)
-                extra: list[str] = []
-                if run_label == "Tokenize":
-                    extra.append(f"TOKENIZE_CONFIG={shlex.quote(str(cfg_path))}")
-                elif run_label == "Fine-tune":
-                    extra.append(f"FINETUNE_CONFIG={shlex.quote(str(cfg_path))}")
-                elif run_label == "ISP UMAP":
-                    extra.append(f"ISP_UMAP_CONFIG={shlex.quote(str(cfg_path))}")
-                if extra:
-                    st.session_state["last_cmd_display"] = (
-                        "export " + " ".join(extra) + " && \\\n" + st.session_state["last_cmd_display"]
-                    )
-
+                if run_label == "Pipeline (E2E)":
+                    st.session_state["pipeline_job_started_ts"] = time.time()
+                    st.session_state.pop("pipeline_output_run_dir", None)
                 log_file = open(log_path, "w", encoding="utf-8", buffering=1)
                 try:
                     p = subprocess.Popen(
@@ -300,18 +750,50 @@ def main() -> None:
     st.subheader("Outputs")
     roots = st.session_state.get("last_output_roots") or []
     if roots:
-        st.markdown("**Output roots from YAML:**")
+        st.markdown("**Output roots from YAML / recent pipeline runs:**")
+        seen: set[str] = set()
         for r in roots:
             p = Path(r)
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
             st.write(f"- `{p}` — exists: {p.is_dir()}")
             if p.is_dir():
                 try:
                     subs = sorted(p.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)[:12]
                     for s in subs:
                         st.caption(f"  · `{s.name}`")
+                    if p.name.startswith("pipeline_"):
+                        for sub in ("isp_results", "finetune", "tokenized_dataset"):
+                            sp = p / sub
+                            if sp.exists():
+                                st.caption(f"  → `{sub}/`")
                 except OSError:
                     pass
     last_run = st.session_state.get("last_run_dir")
+    run_label = st.session_state.get("run_type_sel", "")
+    fig_dirs = _discover_figures_dirs(roots, run_label)
+    zip_payload = _build_figures_zip(fig_dirs) if fig_dirs else None
+    if zip_payload:
+        zip_bytes, zip_name = zip_payload
+        st.download_button(
+            label=f"Download figures (.zip) — {zip_name}",
+            data=zip_bytes,
+            file_name=zip_name,
+            mime="application/zip",
+            key="dl_figures_zip",
+            help="PNG/PDF figures from the newest pipeline or ISP run folder under the output roots above.",
+        )
+        for fd in fig_dirs[:3]:
+            n = len(_list_figure_files(fd))
+            st.caption(f"Included: `{fd}` ({n} file(s))")
+    elif roots and st.session_state.get("last_exit_code") == 0:
+        st.caption(
+            "No figure files found yet under the listed output roots "
+            "(expected `figures/*.png` under `pipeline_*` or `isp_*`, or `umap_*.png` for ISP UMAP)."
+        )
+
     if last_run:
         st.markdown(f"**Last run metadata:** `{last_run}`")
         for name in ("config.yaml", "console.log"):
