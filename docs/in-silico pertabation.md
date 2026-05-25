@@ -1,224 +1,153 @@
 # In-silico perturbation (ISP) — new biology
 
-This guide describes the **end-to-end workflow** to run Geneformer ISP on a **new experiment** (e.g. different tissue, genotype, or condition). Batch entrypoint: [`run_isp.py`](../run_isp.py). Configuration: [`config/isp.yaml`](../config/isp.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
+End-to-end workflow to run Geneformer ISP on a **new experiment** (tissue, genotype, or condition).
+
+Entrypoint: [`run_isp.py`](../run_isp.py). Configuration: [`config/isp.yaml`](../config/isp.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
+
+**Prerequisite:** a tokenized `.dataset` — see [**tokenization.md**](tokenization.md).
 
 ---
 
 ## 1. Define the question
 
-- **Goal-state shift** evaluates how much in silico perturbation of a gene in start-labeled cells (e.g. wild type) shifts the model’s representation toward end-labeled cells (e.g. knockout).
-- **What it measures:** changes in embedding similarity (based on ranked gene expression) in the model’s embedding space — not raw transcript counts or per-gene fold-change (i.e., whether the perturbed WT cell cluster moves towards the KO cell cluster or away from it).
-- **Data requirements:** the tokenized `.dataset` generated from real scRNA-seq of both baseline and target states; label strings must exactly match `perturbation.start_state` and `perturbation.end_state` in `isp.yaml`.
-- Decide **which cell types** proceed to the analysis (e.g. skeletal muscle only). You can enforce that **before tokenization** (subset cells) or **after**, using `isp.filter_data` in `isp.yaml` if those columns exist in the tokenized dataset.
+- **Goal-state shift:** in silico perturbation of a gene in start-labeled cells (e.g. `Disease`) shifts the model representation toward end-labeled cells (e.g. `Ctrl`).
+- **What it measures:** embedding similarity changes in the model space — not raw fold-change.
+- **Data:** tokenized `.dataset` from real scRNA-seq of both states; labels must **exactly** match `perturbation.start_state` and `perturbation.end_state` in `isp.yaml`.
+- **Cell types:** subset before tokenization, or filter after with `isp.filter_data` if columns exist in the dataset.
 
 ---
 
-## 2. Obtain expression data
+## 2. Configure `config/isp.yaml`
 
-You need **raw counts** (single-cell or single-nuc, DO NOT normalize the count) for both start-label (eg WT) and end-label (eg KO). Minimum 500 cells in the cell type of interest; a greater cell number is better. For example, it is ok if there are 1,000 cells of interest (eg muscle) in your single-cell data which contains 8,000 cells in your single-cell data (eg cardiac infarction).
-
-### Acceptable file formats from single-cell RNAseq
-The raw count generated from CellRanger, Dragen, or relatives.
-You must have all three sequence result files for each sequenced samples (barcodes.tsv.gz, features.tsv.gz, and matrix.trx.gz).
-All sequence result files must be in separated folder named as the following rule.
-The folder names represent the samples in three slot ranged by hyphens. The naming rule is 
-`
-./data/ExperimentName/Time-Condition-Replicate/gz files`.
-
-
-This folder naming is used for following data processing as:
-
-| Field	| Rule |
-|-------|------|
-| Time | First segment of the folder name: parts[0] (e.g. 1w, 3w, 5w).|
-| Condition |	Second segment: parts[1] (e.g. WT, KO). |
-| Replicate |	Third segment: parts[2] (e.g. 1st, 2nd, even if you have only 1 replicate, put "1" in the third field). |
-| sample_id |	Full folder name: sample_name (e.g. 1w-AD-1st, 5w-Ccr2KO-AD). |
-
-
-### Alternative file formats
-
-| Format | Notes |
-|--------|--------|
-| **`.loom`** | Primary format described in the tokenizer. Put one or more `*.loom` files in a directory and call `tokenize_data(..., file_format="loom")` (default). |
-| **`.h5ad` (AnnData)** | Supported via `tokenize_data(..., file_format="h5ad")`. Same biology requirements as loom; fields below must be present in the object. |
-
-
-### Required fields for tokenize service
-
-**Genes**
-
-- **`ensembl_id`**: Ensembl gene ID per gene (loom: row attribute `ensembl_id`; AnnData: `adata.var["ensembl_id"]`). Values must match the **mouse** token / median dictionaries used by the tokenizer.
-
-**Cells**
-
-- **`n_counts`**: total UMI/read counts per cell (loom: column attribute `n_counts`; AnnData: `adata.obs["n_counts"]`). Used for normalization before ranking.
-
-**Optional**
-
-- **`filter_pass`**: binary flag per cell; if missing, **all** cells are tokenized (see tokenizer messages).
-
-**Metadata for ISP / YAML**
-
-- Any columns you want in the final **`.dataset`** (and in `isp.yaml`) must be passed through the tokenizer via **`custom_attr_name_dict`**: maps **names in the loom/h5ad** → **column names in the output dataset** (e.g. map your condition column to `disease` if that is your `perturbation.state_key`).
-- Those values must match **`start_state` / `end_state` / `alt_states`** exactly.
-
-### Expression assumptions
-
-- Use **raw counts**, **without** prior feature selection (per tokenizer docstring).
-- Genes are median-scaled and rank-tokenized inside the tokenizer; you do **not** hand ISP a CSV of ranks.
-
----
-
-## 3. Tokenize your data
-
-ISP does **not** read sc-RNAseq data directly, tokenized data will be used in isp. To make tokenized data, 
-
-
-1. **Configure** [`config/tokenize.yaml`](../config/tokenize.yaml): 
-Align the file with your **dataset column names** and **string labels**.
+Align paths and labels with your tokenized dataset.
 
 | YAML area | What to set |
 |-----------|-------------|
 | `paths.dataset` | Path to your **`.dataset`** directory |
-| `paths.geneformer_model` | Mouse Geneformer checkpoint directory |
-| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/isp_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
-| `perturbation.state_key` | **Exact** name of the metadata column for states |
-| `perturbation.start_state` / `end_state` | **Exact** strings as they appear in that column |
-| `perturbation.alt_states` | List of alternate end-state labels, or `[]` |
-| `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` — keys must exist in the dataset |
-| `isp.max_ncells` | Cap on cells (after filters) |
-| `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers for `datasets` |
-
-`model.type: Pretrained` is the usual choice for the stock mouse model. Unspecialized pretrained embeddings measure baseline shifts. If you have fine-tuned the model, choose `CellClassifier` or `GeneClassifier` appropriately (see Section 4).
-
-2. **`input_type: single-cell`**: the pipeline builds `.loom` files under `data.loom_temp_dir` from each sample subfolder (10x `filtered_feature_bc_matrix` or matrix in the folder), then runs `TranscriptomeTokenizer`. With **`single_cell_settings.extract_metadata_from_path: true`**, `time` / `genotype` / `replicate` / `disease` / `sample_id` are filled from the folder name as in §2; adjust naming or the script if your labels differ.
-3. **`input_type: loom`**: put `*.loom` files in `data.input_dir` and skip conversion; ensure loom attributes match the **keys** in `custom_attr_name_dict`.
-4. **Run** (from repo root, repo mounted at `/app` in the container):
-
-```bash
-docker compose run --rm tokenize
-```
-
-
-The isp service expects a **Hugging Face [`datasets`](https://huggingface.co/docs/datasets)** object **saved on disk** as a **`.dataset` directory** with at least:
-
-| Column / field | Role |
-|----------------|------|
-| `input_ids` | Rank-encoded gene tokens per cell |
-| `length` | Sequence length (added by [`TranscriptomeTokenizer`](../geneformer/tokenizer.py)) |
-| Your state column | Named in YAML as `perturbation.state_key`; values must match `start_state` / `end_state` / `alt_states` **exactly** |
-| Other metadata | Optional (e.g. `cell_type`, `time`) if present on the input and listed in `custom_attr_name_dict`, for `isp.filter_data` or bookkeeping |
-
-In this repository, tokenization is driven by **[`config/tokenize.yaml`](../config/tokenize.yaml)** and **[`execute_tokenizer_pipeline.py`](../execute_tokenizer_pipeline.py)** (Compose service **`tokenize`** in [`docker-compose.yml`](../docker-compose.yml)).
-
-
-The image supplies the **mouse** token dictionary (`MLM-re_token_dictionary_v1.pkl`; see [README](../README.md)) and [`TranscriptomeTokenizer`](../geneformer/tokenizer.py). Output is written under `data.output_dir`, typically **`{output_prefix}_0.dataset`** (suffix increments if the tokenizer splits large runs).
-
-**Notebook or custom scripts:** you can call `TranscriptomeTokenizer` and `save_to_disk` yourself (same column requirements). Example layout: [`run_tokenizer_ad.py`](../run_tokenizer_ad.py).
-
-
-
-## 4. Run in Docker
-
-
-1. **Configure** [`config/isp.yaml`](../config/isp.yaml): 
-
-Align the file with your **dataset column names** and **string labels**.
-
-| YAML area | What to set |
-|-----------|-------------|
-| `paths.dataset` | Path to your **`.dataset`** directory |
-| `paths.geneformer_model` | Mouse Geneformer checkpoint directory |
-| `paths.output_root` | Parent directory; each run writes under **`{output_root}/{YYYYMMDD}/isp_<UTC start>/isp_results`** and **`.../ispstats_results`** by default (`paths.output_time_subdir: true`), so same-day reruns do not overwrite. Disable with `output_time_subdir: false`, `ISP_OUTPUT_TIME_SUBDIR=0`, or `--no-output-time-subdir` for a flat **`{output_root}/{YYYYMMDD}/...`** layout. Override the time folder with `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` / `--output-subdir`. Date defaults to today; override with `run_isp.py --output-date` or `ISP_OUTPUT_DATE`. Legacy: `isp_results_dir` and `ispstats_results_dir` instead of `output_root`. |
-| `perturbation.state_key` | **Exact** name of the metadata column for states |
-| `perturbation.start_state` / `end_state` | **Exact** strings as they appear in that column |
-| `perturbation.alt_states` | List of alternate end-state labels, or `[]` |
-| `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` — keys must exist in the dataset |
-| `isp.max_ncells` | Cap on cells (after filters) |
-| `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers for `datasets` |
+| `paths.geneformer_model` | Pretrained or fine-tuned checkpoint directory |
+| `paths.output_root` | Parent output directory |
+| `paths.output_time_subdir` | `true` (default): `{output_root}/{YYYYMMDD}/isp_<UTC>/…`; `false` or `ISP_OUTPUT_TIME_SUBDIR=0` for flat layout under `<DATE>/` |
+| `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` | Fixed folder name under `<DATE>` (single segment) |
+| `perturbation.state_key` | Metadata column for states (e.g. `disease`) |
+| `perturbation.start_state` / `end_state` | **Exact** strings in that column |
+| `perturbation.alt_states` | Alternate end labels, or `[]` |
+| `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` |
+| `isp.max_ncells` | Cap on cells after filters |
+| `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers |
 
 ### Choosing `model.type`
 
-The `model.type` parameter in your `isp.yaml` configuration dictates which underlying architecture of the model is loaded:
-
-- **`Pretrained`**: Loads the base foundation model (`BertForMaskedLM`). This is the usual choice for the stock mouse model. It extracts general-purpose cell and gene embeddings to measure how perturbations shift unspecialized cell states.
-- **`CellClassifier`**: Loads a sequence classification model (`BertForSequenceClassification`). Use this when you've fine-tuned Geneformer on a cell-level classification task (e.g., predicting `disease` or `cell_type` via the `finetune` service). ISP will use these specialized embeddings to measure shifts specifically along your classification axis.
-- **`GeneClassifier`**: Loads a token classification model (`BertForTokenClassification`). Use this if you have fine-tuned Geneformer to classify or predict properties of individual genes instead of whole cells.
-
-
-2. **Run ISP (Single GPU - Default):**
-```bash
-docker compose run --rm isp
-```
-  This invokes `accelerate launch ... --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
-
-**Run ISP (Multiple GPUs):**
-To scale generation across multiple GPUs, pass the `ISP_NUM_GPUS` environment variable. For example, to run on 4 GPUs:
-```bash
-ISP_NUM_GPUS=4 docker compose run --rm isp
-```
-  *Note: The script safely multiplexes the processing across all GPUs using Accelerate, and ensures that the final figures and statistics are only consolidated once on the main process to avoid any race conditions.*
-
-Alternative with Jupyter container already up:
-- Single GPU: `docker exec -it mouse_geneformer_container accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`
-- Multi-GPU (e.g. 4 GPUs): `docker exec -it mouse_geneformer_container accelerate launch --num_processes 4 /app/run_isp.py --config /app/config/isp.yaml`
+- **`Pretrained`**: base `BertForMaskedLM` — usual default for stock mouse Geneformer.
+- **`CellClassifier`**: fine-tuned `BertForSequenceClassification` (see [fine-tuning.md](fine-tuning.md)) — shifts along your classification axis.
+- **`GeneClassifier`**: fine-tuned `BertForTokenClassification` — gene-level tasks.
 
 ---
 
-## 6. Outputs and downstream analysis
+## 3. Run ISP
 
-- **Intermediate / perturbation outputs:** `{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]isp_results` (unless using legacy path keys; omit `isp_<UTC>/` when `output_time_subdir` is false).
-- **Stats (e.g. parquet):** `{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]ispstats_results`.
-- **Figures + table exports:** after stats, `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) (same logic as [`isp_analysis.ipynb`](../isp_analysis.ipynb)): PNGs under **`{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]figures/`** (e.g. `shift_distribution.png`, `volcano_plot.png`, `top_genes_barplot.png`, `waterfall_plot.png`); CSV summaries stay next to the parquet in `ispstats_results`. Disable with `analysis.enabled: false` in `isp.yaml` or `--skip-analysis`.
-- **Run log + provenance (per run folder):** `isp_run.log` (rotating text log of stdout/stderr from `run_isp.py` on the **main** process only), plus `isp_config_used.yaml` and `isp_run_metadata.yaml`, under the same `isp_<UTC>/` directory as results when time subdirs are enabled. Tokenization writes analogous files under `data.output_dir` (`tokenize_run.log`, `tokenize_config_used.yaml`, `tokenize_run_metadata.yaml`). See **[README.md § Run provenance and logs](../README.md#run-provenance-config-summary-and-rotating-logs-isp)** for behavior, rotation, and env vars (`ISP_LOG_*`, `TOKENIZE_LOG_*`, disable flags).
+**Single GPU (default):**
 
-### Per-cell perturbation shift (ISP UMAP service)
+```bash
+docker compose run --rm isp
+```
 
-Standard ISP ranks **genes** by population-level shift. To quantify **how much each individual cell** moves under a chosen gene perturbation (e.g. Igfbp2 delete in AD cells), use the separate **ISP UMAP** service — see [**isp_umap.md**](isp_umap.md).
+Runs `accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
+
+**Multiple GPUs:**
+
+```bash
+ISP_NUM_GPUS=4 docker compose run --rm isp
+```
+
+Statistics and figures are consolidated on the **main** process only.
+
+**Alternate configs:**
+
+```bash
+docker compose run --rm isp accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp_Ctrl-Disease.yaml
+```
+
+**Streamlit:** run type **ISP** or **Pipeline (E2E)** — see [README § Streamlit Web UI](../README.md#streamlit-web-ui).
+
+---
+
+## 4. Outputs and downstream analysis
+
+- **Perturbation outputs:** `{paths.output_root}/{YYYYMMDD}/[isp_<UTC>/]isp_results`
+- **Stats (parquet):** `…/ispstats_results`
+- **Figures:** `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) → PNGs under `…/figures/` (`shift_distribution.png`, `volcano_plot.png`, etc.). Disable with `analysis.enabled: false` or `--skip-analysis`.
+
+### Per-cell shift (ISP UMAP)
+
+Population ISP ranks **genes**. For per-cell trajectories and **`per_cell_isp_shift.csv`**, see [**isp_umap.md**](isp_umap.md).
 
 ```bash
 docker compose run --rm isp_umap
 ```
 
-Each run writes **`per_cell_isp_shift.csv`** under `output/<DATE>/isp_umap_<UTC>/`. One row per start-state cell (e.g. each AD cell in the run), including:
+---
 
-| Column | Meaning |
-|--------|---------|
-| `shift_l2` | L2 distance between embeddings before vs after in-silico perturbation (primary “how perturbed is this cell?” metric in model space) |
-| `shift_toward_<end_state>` | Reduction in distance to the end-state centroid (e.g. WT); positive = moved closer to that reference |
-| `umap1_before` / `umap2_before`, `umap1_after` / `umap2_after` | UMAP coordinates before and after (same cells as the grey arrows on `umap_*.png`) |
-| `umap_shift_l2` | L2 distance moved on the UMAP |
+## 5. Run provenance, config summary, and rotating logs
 
-Tokenized metadata columns on the dataset (e.g. `sample_id`, `disease`) are copied into the CSV so you can join **cell-type labels later** (after classification) and rank which types are most sensitive. Configure via [`config/isp_umap.yaml`](../config/isp_umap.yaml); script: [`run_isp_umap.py`](../run_isp_umap.py).
+On the **main process** only, `run_isp.py` prints a **config summary** (dataset path, model path, perturbation, `isp.max_ncells`, `forward_batch_size`, `nproc`, etc.) and mirrors **stdout** and **stderr** into a **rotating** log next to that run’s outputs:
+
+| Artifact | Location (default: `paths.output_root` + date + `isp_<UTC>/`) | Role |
+|----------|---------------------------------------------------------------|------|
+| `isp_config_used.yaml` | `./output/<DATE>/isp_<UTC>/` | Copy of the ISP YAML used |
+| `isp_run_metadata.yaml` | same | `started_at_utc` at launch; **`finished_at_utc`** and **`run_status`** (`completed` / `failed`) when the run finishes (main process) |
+| `isp_run.log` (+ `.1`, `.2`, …) | same | Console capture from Python onward |
+
+| Variable | Meaning |
+|----------|---------|
+| `ISP_LOG_MAX_BYTES` | Max size of `isp_run.log` before rotation (default `52428800`, 50 MiB) |
+| `ISP_LOG_BACKUP_COUNT` | Rotated backups to keep (default `5`; `0` truncates instead of renaming) |
+| `ISP_DISABLE_RUN_LOG` | `1` / `true` / `yes` to skip file logging (console unchanged) |
+| `ISP_GIT_COMMIT` | Written into `isp_run_metadata.yaml` when `git` is unavailable |
+| `ISP_OUTPUT_TIME_SUBDIR` | `1` / `true` / `yes` (default per YAML) or `0` / `false` / `no` to disable `isp_<UTC>/` under each `<DATE>` |
+| `ISP_OUTPUT_SUBDIR` | Fixed folder name under `<DATE>` (single path segment) |
+| `ISP_OUTPUT_DATE` / `--output-date` | Override output date folder |
+
+**Note:** Lines from `accelerate launch` *before* `run_isp.py` starts appear only in the terminal unless you redirect at the shell level (e.g. `docker compose run ... 2>&1 | tee full_terminal.log`).
+
+### About the run log files (`*.log`)
+
+- **Captured:** stdout/stderr after the tee is installed — prints, HuggingFace progress bars, etc. (UTF-8 text).
+- **Not captured:** `accelerate launch` startup before Python attaches the tee.
+- **Multi-GPU:** only the **main** process writes `isp_run.log`; other ranks print to the terminal only.
+- **Append vs. rotate:** reusing the same output folder **appends** to `isp_run.log`. Default layout uses a new `isp_<UTC>/` per launch. When size exceeds `ISP_LOG_MAX_BYTES`, the log rotates to `.log.1`, `.2`, … up to `ISP_LOG_BACKUP_COUNT`.
+- **Provenance:** `*_config_used.yaml` and `*_run_metadata.yaml` are the config snapshot; `.log` is console history for debugging.
+
+Tokenization logs (`tokenize_run.log`, etc.): [**tokenization.md § Run provenance**](tokenization.md#5-run-provenance-and-logs).
+
+Implementation: [`run_isp.py`](../run_isp.py), [`run_pipeline_log.py`](../run_pipeline_log.py).
 
 ---
 
-## Do I need a new `.dataset`?
+## 6. Do I need a new `.dataset`?
 
 | Situation | Action |
 |-----------|--------|
-| New tissue, genotype, or comparison | **Yes** — build or obtain a **tokenized** `.dataset` with correct `input_ids` and state metadata, then point `paths.dataset` at it. |
-| Same dataset; only batch size / cell cap changes | Adjust `runtime.*` and/or `isp.max_ncells` only. |
-| Same experiment; paths on disk changed | Update `paths.*` in `isp.yaml` only. |
+| New tissue, genotype, or comparison | **Yes** — [tokenize](tokenization.md), then point `paths.dataset` at the new `.dataset` |
+| Same dataset; batch size / cell cap only | Adjust `runtime.*` and/or `isp.max_ncells` |
+| Same experiment; paths moved | Update `paths.*` in `isp.yaml` only |
 
 ---
 
-## Hard requirements
+## 7. Hard requirements
 
-1. **Same vocabulary** as training: mouse **pretrained** Geneformer + token dictionary used to build `input_ids`.
-2. **Exact string match** between dataset labels and `start_state` / `end_state` / `alt_states` in YAML (including spaces and casing).
-
----
-
-## Memory and throughput
-
-- Prefer **letting PyTorch manage GPU memory** between batches. Avoid calling `torch.cuda.empty_cache()`, `torch.cuda.synchronize()`, or aggressive `gc.collect()` in hot loops or after every pipeline stage: that can serialize CPU/GPU work and hurt the caching allocator, lowering GPU utilization.
-- If a forward pass hits **CUDA OOM**, the ISP code may **empty the cache once and retry** that forward; if it still fails, reduce `runtime.forward_batch_size` or `isp.max_ncells` and rerun.
-- **CPU `nproc`**: tune for your host (see `config/isp.yaml`); it only speeds dataset map/filter steps, not the transformer forwards.
+1. **Same vocabulary** as training: mouse pretrained Geneformer + token dictionary used to build `input_ids`.
+2. **Exact string match** between dataset labels and `start_state` / `end_state` / `alt_states` in YAML.
 
 ---
 
-## Flow summary
+## 8. Memory and throughput
 
-**Design → raw counts + metadata → tokenize → save `.dataset` → edit `isp.yaml` → `docker compose run --rm isp` → outputs → analysis.**
+- Let PyTorch manage GPU memory between batches; avoid `torch.cuda.empty_cache()` / aggressive `gc.collect()` in hot loops.
+- On CUDA OOM, ISP may retry once after cache clear; then lower `runtime.forward_batch_size` or `isp.max_ncells`.
+- **`nproc`**: speeds dataset map/filter only, not transformer forwards.
+
+---
+
+## 9. Flow summary
+
+**Design → [tokenize](tokenization.md) → edit `isp.yaml` → `docker compose run --rm isp` → stats / figures → analysis.**

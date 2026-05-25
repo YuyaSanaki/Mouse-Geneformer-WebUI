@@ -11,7 +11,7 @@
 - **Fine-Tuning:** Uses `config/finetune.yaml`. Execute via `docker compose run --rm finetune`. Supports disease and cell-type classification. Fine-tuned models can then be used by ISP by setting `model.type: CellClassifier` and pointing `paths.geneformer_model` to the checkpoint.
 
 ## Data Structure
-- Input single-cell data is located in `data/AD/` and `data/PIPseq/`.
+- Input single-cell data is located under `data/` (e.g. `data/MyStudy/` with `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`).
 - Tokenized datasets are stored in `data/*/tokenized_dataset/`.
 - ISP results are written to `output/YYYYMMDD/`.
 - Fine-tuned models are written to `output/YYYYMMDD/finetune_*/`.

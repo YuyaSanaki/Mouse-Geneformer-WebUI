@@ -367,14 +367,18 @@ def main() -> None:
 
     # ── Output directory ──
     date_used = datetime.now().strftime("%Y%m%d")
-    run_root = Path(output_root) / date_used
-
-    want_time_subdir = _deep_get(cfg, "paths", "output_time_subdir", default=True)
-    if want_time_subdir:
-        run_folder = _utc_run_folder_name(datetime.now(timezone.utc))
-        run_root = run_root / run_folder
+    explicit_run_dir = paths.get("run_dir")
+    if explicit_run_dir:
+        run_root = Path(str(explicit_run_dir))
+        run_folder = "(paths.run_dir)"
     else:
-        run_folder = "(flat under date)"
+        run_root = Path(output_root) / date_used
+        want_time_subdir = _deep_get(cfg, "paths", "output_time_subdir", default=True)
+        if want_time_subdir:
+            run_folder = _utc_run_folder_name(datetime.now(timezone.utc))
+            run_root = run_root / run_folder
+        else:
+            run_folder = "(flat under date)"
 
     run_root.mkdir(parents=True, exist_ok=True)
 

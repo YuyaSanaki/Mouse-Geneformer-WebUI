@@ -234,9 +234,9 @@ class TranscriptomeTokenizer:
         
 
         if file_found == 0:
-            logger.error(
-                f"No .{file_format} files found in directory {data_directory}.")
-            raise
+            msg = f"No .{file_format} files found in directory {data_directory}."
+            logger.error(msg)
+            raise RuntimeError(msg)
 
         return tokenized_cells, cell_metadata
 

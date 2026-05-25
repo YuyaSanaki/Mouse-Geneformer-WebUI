@@ -11,36 +11,49 @@ from typing import Any
 
 # Add current directory to path so geneformer and provenance can be imported
 sys.path.append(os.getcwd())
+from data_input_layout import (
+    diagnose_input_dir,
+    discover_sample_dirs,
+    parse_sample_folder_name,
+    resolve_single_cell_input_dir,
+    sample_label,
+    tenx_matrix_directory,
+)
 from geneformer import TranscriptomeTokenizer
 from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_tee
 from run_provenance import write_service_provenance, update_service_provenance
 
-def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg):
-    """Convert subdirectories of (barcodes/features/matrix) to .loom files."""
+
+def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg) -> int:
+    """Convert subdirectories of (barcodes/features/matrix) to .loom files. Returns loom count."""
     os.makedirs(loom_temp_dir, exist_ok=True)
-    
-    # List all subdirectories
-    sample_dirs = sorted([os.path.join(input_dir, d) for d in os.listdir(input_dir) 
-                  if os.path.isdir(os.path.join(input_dir, d)) 
-                  and not d.startswith(".") 
-                  and os.path.abspath(os.path.join(input_dir, d)) != os.path.abspath(loom_temp_dir)])
-    
+    input_path = Path(input_dir).resolve()
+    loom_path = Path(loom_temp_dir).resolve()
+    data_root = resolve_single_cell_input_dir(input_path, loom_path)
+    if data_root != input_path:
+        print(f"Resolved single-cell study root: {data_root} (from {input_path})")
+
+    sample_dirs = discover_sample_dirs(data_root, exclude=loom_path)
+    if sample_dirs:
+        print(f"Found {len(sample_dirs)} sample(s): {', '.join(p.name for p in sample_dirs)}")
+
     if not sample_dirs:
-        print(f"No sample directories found in {input_dir}")
-        return
+        print(f"No 10x sample directories found under {data_root}")
+        print(diagnose_input_dir(input_path, loom_path))
+        return 0
 
+    converted = 0
     for sample_dir in sample_dirs:
-        sample_name = os.path.basename(sample_dir.rstrip('/'))
-        
-        # Check for filtered_feature_bc_matrix/ (standard for many platforms)
-        mtx_path = os.path.join(sample_dir, "filtered_feature_bc_matrix")
-        if not os.path.exists(mtx_path):
-            if os.path.exists(os.path.join(sample_dir, "matrix.mtx.gz")):
-                mtx_path = sample_dir
-            else:
-                continue
+        sample_path = Path(sample_dir)
+        folder_name = sample_path.name
+        loom_stem = sample_label(sample_path, data_root)
+        mtx_path_obj = tenx_matrix_directory(sample_path)
+        if mtx_path_obj is None:
+            print(f"Skipping {folder_name}: no 10x matrix files found.")
+            continue
+        mtx_path = str(mtx_path_obj)
 
-        print(f"Converting {sample_name} to loom...")
+        print(f"Converting {folder_name} → {loom_stem}.loom (from {mtx_path})...")
         try:
             # Read mtx and set Ensembl IDs
             adata = sc.read_10x_mtx(mtx_path, var_names='gene_ids', make_unique=True)
@@ -48,25 +61,31 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
             adata.var['ensembl_id'] = adata.var_names.astype(str).str.split('.').str[0]
             adata.obs['n_counts'] = adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
 
-            if settings.get('extract_metadata_from_path'):
-                parts = sample_name.split('-')
-                if len(parts) >= 3:
-                    adata.obs['time'], adata.obs['genotype'], adata.obs['replicate'] = parts[0], parts[1], parts[2]
-                    adata.obs['disease'] = parts[1]
-                else:
-                    adata.obs['disease'] = sample_name
-            
-            # Ensure all keys in custom_attr_name_dict exist to prevent tokenizer crashes
-            if tokenizer_cfg.get('custom_attr_name_dict'):
-                for attr in tokenizer_cfg['custom_attr_name_dict'].keys():
+            if settings.get("extract_metadata_from_path"):
+                meta = parse_sample_folder_name(folder_name)
+                adata.obs["time"] = meta["time"]
+                adata.obs["genotype"] = meta["genotype"]
+                adata.obs["disease"] = meta["disease"]
+                adata.obs["replicate"] = meta["replicate"]
+                adata.obs["sample_id"] = meta["sample_id"]
+            elif tokenizer_cfg.get("custom_attr_name_dict"):
+                adata.obs["sample_id"] = folder_name
+
+            if tokenizer_cfg.get("custom_attr_name_dict"):
+                for attr in tokenizer_cfg["custom_attr_name_dict"].keys():
                     if attr not in adata.obs.columns:
                         adata.obs[attr] = ""
-            
-            adata.obs['sample_id'] = sample_name
-            # Convert to loom
-            adata.write_loom(os.path.join(loom_temp_dir, f"{sample_name}.loom"))
+
+            if "sample_id" not in adata.obs.columns:
+                adata.obs["sample_id"] = folder_name
+            adata.write_loom(os.path.join(loom_temp_dir, f"{loom_stem}.loom"))
+            converted += 1
         except Exception as e:
-            print(f"Error converting {sample_name}: {e}")
+            print(f"Error converting {folder_name}: {e}")
+
+    print(f"Converted {converted} sample(s) to .loom under {loom_temp_dir}")
+    return converted
+
 
 def main():
     config_path = Path(os.getenv("TOKENIZE_CONFIG", "/app/config/tokenize.yaml")).expanduser()
@@ -94,15 +113,31 @@ def main():
     print(f"  run log (rotating): {log_path}")
 
     # Step 1: Handle Conversion if needed
-    if data_cfg['input_type'] == "single-cell":
+    if data_cfg["input_type"] == "single-cell":
         print("Input type is single-cell. Converting to loom first...")
-        process_single_cell_to_loom(
-            data_cfg['input_dir'], 
-            data_cfg['loom_temp_dir'], 
+        study_root = resolve_single_cell_input_dir(
+            data_cfg["input_dir"], data_cfg.get("loom_temp_dir")
+        )
+        if str(study_root) != str(Path(data_cfg["input_dir"]).resolve()):
+            print(
+                f"Note: data.input_dir was {data_cfg['input_dir']}; "
+                f"using study root {study_root} (ExperimentName / Time-Condition-Replicate layout)."
+            )
+        data_cfg["input_dir"] = str(study_root)
+        n_converted = process_single_cell_to_loom(
+            data_cfg["input_dir"],
+            data_cfg['loom_temp_dir'],
             single_cell_settings,
             tokenizer_cfg,
         )
-        tokenizer_input_dir = data_cfg['loom_temp_dir']
+        loom_dir = Path(data_cfg['loom_temp_dir'])
+        n_looms = len(list(loom_dir.glob("*.loom")))
+        if n_looms == 0:
+            print(diagnose_input_dir(data_cfg['input_dir'], data_cfg['loom_temp_dir']))
+            raise SystemExit(
+                "No .loom files produced. Fix data.input_dir layout (see message above) and retry."
+            )
+        tokenizer_input_dir = str(loom_dir) + ("" if str(loom_dir).endswith(os.sep) else os.sep)
         file_format = "loom"
     else:
         print("Input type is loom. Skipping conversion.")

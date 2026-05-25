@@ -46,6 +46,7 @@ services:
     ports:
       - "8501:8501"
     environment:
+      - WEBUI_ROOT=/app
       - WANDB_DISABLED=true
       # Megabytes; overrides default 200 MB cap on st.file_uploader (see .streamlit/config.toml).
       - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1024000
@@ -96,6 +97,20 @@ services:
       - /app/run_finetune.py
       - --config
       - /app/config/finetune.yaml
+
+  # End-to-end Tokenize → Fine-tune → ISP: docker compose run --rm pipeline
+  pipeline:
+    <<: *geneformer-base
+    container_name: mouse_geneformer_pipeline
+    environment:
+      - PIPELINE_CONFIG=/app/config/pipeline.yaml
+      - WANDB_DISABLED=true
+      - ISP_NUM_GPUS=${ISP_NUM_GPUS:-1}
+    command:
+      - python3
+      - /app/run_pipeline.py
+      - --config
+      - /app/config/pipeline.yaml
 
   # ISP UMAP Plot Generation: docker compose run --rm isp_umap
   isp_umap:
