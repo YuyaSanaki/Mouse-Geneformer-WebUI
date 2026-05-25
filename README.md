@@ -1,6 +1,5 @@
-# Mouse Geneformer
-
-Docker Compose workflows for **Tokenize → Fine-tune → In-silico perturbation (ISP)** on mouse single-cell data. All services share one image (`mouse-geneformer`).
+# Mouse Geneformer WebUI
+This is a refactored clone of mouse-Geneformer (https://github.com/machine-perception-robotics-group/Mouse-Geneformer). This will run in NVIDIA GPU workstation/server with docker enviroment. All services run via Docker Compose (diverges from the original Mouse-Geneformer repo which used plain Jupyter). All services can be run by CLI or WebUI.
 
 ## Requirements
 
