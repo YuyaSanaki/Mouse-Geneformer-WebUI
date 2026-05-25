@@ -1,5 +1,8 @@
 # Mouse Geneformer WebUI
-This is a refactored clone of mouse-Geneformer (https://github.com/machine-perception-robotics-group/Mouse-Geneformer). This will run in NVIDIA GPU workstation/server with docker enviroment. All services run via Docker Compose (diverges from the original Mouse-Geneformer repo which used plain Jupyter). All services can be run by CLI or WebUI.
+
+This is a refactored clone of [mouse-Geneformer](https://github.com/machine-perception-robotics-group/Mouse-Geneformer). It runs on an NVIDIA GPU workstation or server with Docker. All services use Docker Compose (the upstream repo used Jupyter). You can run jobs from the **Web UI** or the **CLI**.
+
+
 
 ## Requirements
 
@@ -61,18 +64,18 @@ After [Install](#install), run the full **Tokenize → Fine-tune → ISP** pipel
 docker compose up -d webui
 ```
 
-Open **http://localhost:8501** (**Mouse Geneformer WebUI** — [Mouse-Geneformer-WebUI](https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI)).
+Open **http://localhost:8501** ([Mouse-Geneformer-WebUI](https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI)).
 
-1. **Run type** — **Pipeline (E2E)**.
-2. **Study name** — your experiment name (e.g. `MyExperiment`; set **before** uploading the zip).
-3. **Upload** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.tsv.gz`.
+1. **Study name** — your experiment name (e.g. `MyExperiment`; set **before** uploading the zip).
+2. **Upload** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.tsv.gz`.
+3. **Run type** — **Pipeline (E2E)**.
 4. **ISP states** — pick **start_state** / **end_state** (e.g. AD, WT) → **Apply setting to Config YAML**.
 5. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`.
 
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md). Default ISP runs all genes (can take ~30 hours on DGX Spark).
 
 More detail: [docs/web-ui.md](docs/web-ui.md).
-
+![Mouse Geneformer WebUI — study upload, Pipeline (E2E), ISP states, and run directory](docs/webui.png)
 ---
 
 ## CLI
