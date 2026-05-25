@@ -2,6 +2,7 @@
 /data/
 /models/
 /output/
+/mlruns/
 *.db
 
 # Local Docker / Compose overrides

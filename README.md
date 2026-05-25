@@ -14,7 +14,9 @@ Primary testing is on **DGX Spark (aarch64)**; x86\_64 NVIDIA hosts are supporte
 
 **Not supported:** CPU-only, non-NVIDIA GPUs, or macOS GPU.
 
-## Install {#install}
+<a id="install"></a>
+
+## Install
 
 1. **Clone** and enter the repository:
    ```bash
@@ -50,7 +52,9 @@ Primary testing is on **DGX Spark (aarch64)**; x86\_64 NVIDIA hosts are supporte
 
 ---
 
-## Quick start (Web UI — Pipeline E2E) {#streamlit-web-ui}
+<a id="streamlit-web-ui"></a>
+
+## Quick start (Web UI — Pipeline E2E)
 
 After [Install](#install), run the full **Tokenize → Fine-tune → ISP** pipeline from the browser (same as `run_pipeline.py` on the CLI).
 
@@ -61,14 +65,12 @@ docker compose up -d webui
 Open **http://localhost:8501** (**Mouse Geneformer WebUI** — [Mouse-Geneformer-WebUI](https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI)).
 
 1. **Run type** — **Pipeline (E2E)**.
-2. **Study name** — e.g. `test` (set **before** uploading the zip).
-3. **Upload** — study **`.zip`** with sample folders (`Time-State-Suffix/*.gz` eg: `1w-Ctrl-SingleCell/*.gz` and `1w-Disease-SingleCell/*.gz`). Each .gz must be barcodes.tsv.gz, features.tsv.gz, and matrix.tsv.gz.
-4. **ISP states** — pick **start_state** / **end_state** (e.g. Ctrl, Disease) from detected labels → **Set ISP states in YAML**.
+2. **Study name** — your experiment name (e.g. `MyExperiment`; set **before** uploading the zip).
+3. **Upload** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.tsv.gz`.
+4. **ISP states** — pick **start_state** / **end_state** (e.g. AD, WT) → **Apply setting to Config YAML**.
 5. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`.
 
-Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md).
-Default isp run all genes, it will take 30 hours on DGX spark.
-
+Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md). Default ISP runs all genes (can take ~30 hours on DGX Spark).
 
 More detail: [docs/web-ui.md](docs/web-ui.md).
 
@@ -88,8 +90,6 @@ docker compose run --rm pipeline
 | Fine-tune | `docker compose run --rm finetune` | [fine-tuning.md](docs/fine-tuning.md) |
 | ISP | `docker compose run --rm isp` | [in-silico pertabation.md](docs/in-silico%20pertabation.md) |
 | ISP UMAP | `docker compose run --rm isp_umap` | [isp_umap.md](docs/isp_umap.md) |
-
-
 
 ---
 
