@@ -19,11 +19,11 @@ Primary testing is on **DGX Spark (aarch64)**; x86\_64 NVIDIA hosts are supporte
 
 1. **Clone** and enter the repository:
    ```bash
-   git clone <repository-url>
-   cd Mouse-Geneformer
+   git clone https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI
+   cd Mouse-Geneformer-WebUI
    ```
 
-2. **Git LFS:**
+2. **Git Large Files:**
    ```bash
    git lfs install
    git lfs pull
