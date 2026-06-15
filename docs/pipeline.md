@@ -92,7 +92,7 @@ perturbation:
   start_state: Disease   # must match 2nd segment of sample folder names
   end_state: Ctrl
   alt_states: []
-  genes_to_perturb: []
+  genes_to_perturb: [Ece1]   # symbols or Ensembl IDs; [] = genome-wide ISP
 
 stages:
   tokenize: {}
@@ -137,7 +137,16 @@ Copied into the generated ISP config. Same keys as [`config/isp.yaml`](../config
 | `state_key` | Metadata column for states (e.g. `disease`) |
 | `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (from folder names when `extract_metadata_from_path` is on) |
 | `organ_data` | Optional output filename prefix |
-| `genes_to_perturb` | Optional gene list; empty = genome-wide |
+| `genes_to_perturb` | Optional gene list (mouse symbols e.g. `Ece1`, `Igfbp2`, or Ensembl IDs); empty = genome-wide. Symbols are resolved to Ensembl IDs when the pipeline builds the ISP stage config. |
+
+Example — test one gene in the E2E pipeline:
+
+```yaml
+perturbation:
+  genes_to_perturb: [Igfbp2]
+```
+
+---
 
 ### `stages` (optional overrides)
 

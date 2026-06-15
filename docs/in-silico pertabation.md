@@ -31,6 +31,7 @@ Align paths and labels with your tokenized dataset.
 | `perturbation.state_key` | Metadata column for states (e.g. `disease`) |
 | `perturbation.start_state` / `end_state` | **Exact** strings in that column |
 | `perturbation.alt_states` | Alternate end labels, or `[]` |
+| `perturbation.genes_to_perturb` | Target genes: mouse symbols (e.g. `Ece1`, `Igfbp2`) or Ensembl IDs; `[]` = all genes (slow) |
 | `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` |
 | `isp.max_ncells` | Cap on cells after filters |
 | `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers |
@@ -40,6 +41,29 @@ Align paths and labels with your tokenized dataset.
 - **`Pretrained`**: base `BertForMaskedLM` — usual default for stock mouse Geneformer.
 - **`CellClassifier`**: fine-tuned `BertForSequenceClassification` (see [fine-tuning.md](fine-tuning.md)) — shifts along your classification axis.
 - **`GeneClassifier`**: fine-tuned `BertForTokenClassification` — gene-level tasks.
+
+### `perturbation.genes_to_perturb`
+
+Controls which genes are perturbed. Symbols and Ensembl IDs are both accepted; [`run_isp.py`](../run_isp.py) resolves symbols via [`geneformer/gene_ids.py`](../geneformer/gene_ids.py).
+
+| Value | Behavior |
+|-------|----------|
+| `[]` (empty) | Genome-wide ISP — each detected gene per cell (~30 h on DGX Spark) |
+| `[Ece1]` | Single gene by symbol |
+| `[Igfbp2]` | Single gene by symbol |
+| `[ENSMUSG00000057530]` | Single gene by Ensembl ID |
+| `[Ece1, Igfbp2]` | Both genes perturbed **together** as one group |
+
+Example in [`config/isp.yaml`](../config/isp.yaml):
+
+```yaml
+perturbation:
+  genes_to_perturb: [Ece1]   # or [ENSMUSG00000057530]
+```
+
+At startup, the log prints symbol → Ensembl conversions, e.g. `Resolved gene symbol 'Ece1' -> ENSMUSG00000057530`.
+
+**Targeted-gene runs** (`genes_to_perturb: [Ece1]`, not `[]`) produce a **per-cell** parquet with only `Shift_to_goal_end` — no volcano plot or random-gene p-values (Geneformer has no random baseline for a single specified perturbation). [`isp_analysis.py`](../isp_analysis.py) writes a shift histogram, per-cell waterfall, `per_cell_shifts.csv`, and `shift_summary.csv` instead.
 
 ---
 

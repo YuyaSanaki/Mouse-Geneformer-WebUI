@@ -31,6 +31,7 @@ import torch
 import yaml
 from accelerate import Accelerator
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
+from geneformer.gene_ids import resolve_genes_to_perturb
 
 from run_pipeline_log import format_isp_run_banner, install_rotating_stdio_tee
 
@@ -370,7 +371,12 @@ def main() -> None:
         raise ValueError("config perturbation.start_state and perturbation.end_state are required.")
     alt_state = list(pert.get("alt_states") or [])
     organ_data = pert.get("organ_data", "experiment")
-    genes_to_perturb_list = list(pert.get("genes_to_perturb") or [])
+    raw_genes_to_perturb = list(pert.get("genes_to_perturb") or [])
+    genes_to_perturb_list = resolve_genes_to_perturb(raw_genes_to_perturb)
+    if accelerator.is_main_process:
+        for raw, resolved in zip(raw_genes_to_perturb, genes_to_perturb_list):
+            if raw != resolved:
+                print(f"  Resolved gene symbol {raw!r} -> {resolved}", flush=True)
     state_key = pert.get("state_key", "disease")
 
     mdl = cfg.get("model") or {}

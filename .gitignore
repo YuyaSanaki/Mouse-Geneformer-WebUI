@@ -16,3 +16,6 @@ __pycache__/
 
 # Large dictionary files
 /geneformer/dicts/
+
+# Local notes
+ToDo.txt

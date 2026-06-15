@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import yaml
 
 from data_input_layout import resolve_single_cell_input_dir
+from geneformer.gene_ids import resolve_genes_to_perturb
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_PRETRAINED = "/app/models/mouse-Geneformer/"
@@ -171,7 +172,10 @@ def build_isp_config(
     cfg.setdefault("perturbation", {})
     for key in ("type", "organ_data", "state_key", "start_state", "end_state", "alt_states", "genes_to_perturb"):
         if key in pert_defaults and pert_defaults[key] is not None:
-            cfg["perturbation"][key] = pert_defaults[key]
+            val = pert_defaults[key]
+            if key == "genes_to_perturb":
+                val = resolve_genes_to_perturb(list(val))
+            cfg["perturbation"][key] = val
 
     cfg.setdefault("model", {})
     cfg["model"]["type"] = cfg["model"].get("type", "CellClassifier")

@@ -23,7 +23,7 @@ Key configurations to note:
 
 ### Gene Symbol Auto-Detection
 
-The `gene_to_perturb` parameter supports gene symbols (e.g. `TargetGene`) and Ensembl IDs. Symbols are resolved via internal Geneformer dictionaries (`GENE_NAME_ID_DICTIONARY_FILE`) to the proper `.dataset` token.
+The `gene_to_perturb` parameter supports gene symbols (e.g. `Igfbp2`, `Ece1`) and Ensembl IDs. Symbols are resolved via [`geneformer/gene_ids.py`](../geneformer/gene_ids.py) to the proper `.dataset` token. The same resolver is used for `genes_to_perturb` in standalone ISP ([in-silico pertabation.md](in-silico%20pertabation.md)) and the E2E pipeline ([pipeline.md](pipeline.md)).
 
 ## Running
 

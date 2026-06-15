@@ -21,32 +21,72 @@ import seaborn as sns  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
 
-def run_isp_figure_analysis(
-    parquet_path: str | Path,
-    figures_dir: str | Path,
-    stats_dir: str | Path,
+def _is_targeted_gene_isp(df: pd.DataFrame) -> bool:
+    """Targeted genes_to_perturb runs emit per-cell shifts only (no random-gene p-values)."""
+    return "Goal_end_vs_random_pval" not in df.columns
+
+
+def _run_targeted_gene_isp_analysis(
+    df: pd.DataFrame,
+    figures_dir: Path,
+    stats_dir: Path,
     *,
-    label_start: str = "start",
-    label_end: str = "goal",
+    label_start: str,
+    label_end: str,
 ) -> None:
-    parquet_path = Path(parquet_path)
-    figures_dir = Path(figures_dir)
-    stats_dir = Path(stats_dir)
-    if not parquet_path.is_file():
-        raise FileNotFoundError(f"Parquet not found: {parquet_path}")
+    goal_label = f"{label_start} → {label_end}"
+    print("[isp_analysis] Targeted-gene ISP: per-cell shift table (no genome-wide p-values).")
 
-    figures_dir.mkdir(parents=True, exist_ok=True)
-    stats_dir.mkdir(parents=True, exist_ok=True)
+    if "Shift_to_goal_end" not in df.columns:
+        raise KeyError(
+            "Expected column 'Shift_to_goal_end' in targeted-gene ISP parquet. "
+            f"Got columns: {list(df.columns)}"
+        )
 
-    sns.set_theme(style="whitegrid", font_scale=1.2)
-    plt.rcParams["figure.dpi"] = 120
-    plt.rcParams["savefig.dpi"] = 150
+    print("=" * 60)
+    print("Summary Statistics for Shift_to_goal_end (per cell)")
+    print("=" * 60)
+    print(df["Shift_to_goal_end"].describe())
+    print(f"\nCells with positive shift toward {label_end}: {(df['Shift_to_goal_end'] > 0).sum()}")
 
-    df = pd.read_parquet(parquet_path)
-    print(f"[isp_analysis] Loaded {len(df)} genes from {parquet_path}")
-    if "Sig" in df.columns:
-        print(f"[isp_analysis] Significant (Sig=1): {int(df['Sig'].sum())}")
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.hist(df["Shift_to_goal_end"], bins=50, color="steelblue", edgecolor="white", alpha=0.8)
+    ax.axvline(x=0, color="red", linestyle="--", linewidth=1.5, label="Zero shift")
+    ax.set_xlabel(f"Shift to goal ({label_end})")
+    ax.set_ylabel("Number of cells")
+    ax.set_title(f"Per-cell shift distribution: {goal_label}")
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(figures_dir / "shift_distribution.png", bbox_inches="tight")
+    plt.close(fig)
 
+    df_sorted = df.sort_values("Shift_to_goal_end", ascending=False).reset_index(drop=True)
+    colors_wf = ["steelblue" if v >= 0 else "coral" for v in df_sorted["Shift_to_goal_end"]]
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.bar(range(len(df_sorted)), df_sorted["Shift_to_goal_end"], color=colors_wf, width=1.0, edgecolor="none")
+    ax.set_xlabel("Cell rank (by shift)")
+    ax.set_ylabel("Shift to goal end")
+    ax.set_title(f"Per-cell waterfall: {goal_label}")
+    ax.axhline(y=0, color="black", linewidth=0.5)
+    plt.tight_layout()
+    fig.savefig(figures_dir / "waterfall_plot.png", bbox_inches="tight")
+    plt.close(fig)
+
+    df_sorted.to_csv(stats_dir / "per_cell_shifts.csv", index=False)
+    df["Shift_to_goal_end"].describe().to_csv(stats_dir / "shift_summary.csv")
+    print("[isp_analysis] Skipped volcano / gene-ranking plots (require genome-wide ISP).")
+    print(f"[isp_analysis] Figures saved under: {figures_dir}")
+    print(f"[isp_analysis] Tables saved under:   {stats_dir}")
+
+
+def _run_genome_wide_isp_analysis(
+    df: pd.DataFrame,
+    figures_dir: Path,
+    stats_dir: Path,
+    *,
+    label_start: str,
+    label_end: str,
+) -> None:
     goal_label = f"{label_start} → {label_end}"
 
     # --- Summary to stdout ---
@@ -144,8 +184,7 @@ def run_isp_figure_analysis(
     if not df_sig.empty:
         n_sig_top = min(25, len(df_sig))
         fig, axes = plt.subplots(1, 2, figsize=(18, 8))
-        
-        # Top positive shifters among significant
+
         top_sig_pos = df_sig.nlargest(n_sig_top, "Shift_to_goal_end")
         axes[0].barh(range(len(top_sig_pos)), top_sig_pos["Shift_to_goal_end"].values, color="red", edgecolor="white")
         axes[0].set_yticks(range(len(top_sig_pos)))
@@ -153,8 +192,7 @@ def run_isp_figure_analysis(
         axes[0].invert_yaxis()
         axes[0].set_xlabel("Shift to goal end")
         axes[0].set_title(f"Top {len(top_sig_pos)} significant toward goal ({label_end})")
-        
-        # Top negative shifters among significant
+
         top_sig_neg = df_sig.nsmallest(n_sig_top, "Shift_to_goal_end")
         axes[1].barh(range(len(top_sig_neg)), top_sig_neg["Shift_to_goal_end"].values, color="red", edgecolor="white")
         axes[1].set_yticks(range(len(top_sig_neg)))
@@ -162,7 +200,7 @@ def run_isp_figure_analysis(
         axes[1].invert_yaxis()
         axes[1].set_xlabel("Shift to goal end")
         axes[1].set_title(f"Top {len(top_sig_neg)} significant away from goal ({label_end})")
-        
+
         plt.suptitle("Significant genes only (FDR < 0.05)", fontsize=12)
         plt.tight_layout()
         fig.savefig(figures_dir / "top_significant_genes_barplot.png", bbox_inches="tight")
@@ -219,6 +257,50 @@ def run_isp_figure_analysis(
 
     print(f"[isp_analysis] Figures saved under: {figures_dir}")
     print(f"[isp_analysis] Tables saved under:   {stats_dir}")
+
+
+def run_isp_figure_analysis(
+    parquet_path: str | Path,
+    figures_dir: str | Path,
+    stats_dir: str | Path,
+    *,
+    label_start: str = "start",
+    label_end: str = "goal",
+) -> None:
+    parquet_path = Path(parquet_path)
+    figures_dir = Path(figures_dir)
+    stats_dir = Path(stats_dir)
+    if not parquet_path.is_file():
+        raise FileNotFoundError(f"Parquet not found: {parquet_path}")
+
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    stats_dir.mkdir(parents=True, exist_ok=True)
+
+    sns.set_theme(style="whitegrid", font_scale=1.2)
+    plt.rcParams["figure.dpi"] = 120
+    plt.rcParams["savefig.dpi"] = 150
+
+    df = pd.read_parquet(parquet_path)
+    print(f"[isp_analysis] Loaded {len(df)} rows from {parquet_path}")
+    if _is_targeted_gene_isp(df):
+        _run_targeted_gene_isp_analysis(
+            df,
+            figures_dir,
+            stats_dir,
+            label_start=label_start,
+            label_end=label_end,
+        )
+        return
+
+    if "Sig" in df.columns:
+        print(f"[isp_analysis] Significant (Sig=1): {int(df['Sig'].sum())}")
+    _run_genome_wide_isp_analysis(
+        df,
+        figures_dir,
+        stats_dir,
+        label_start=label_start,
+        label_end=label_end,
+    )
 
 
 def main() -> None:
