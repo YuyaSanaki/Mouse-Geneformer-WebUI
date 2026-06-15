@@ -22,16 +22,20 @@ umap:
 
 perturbation:
   # Gene to perturb. Accepts Ensembl ID (e.g. ENSMUSG00000039323) or Gene Symbol (e.g. Igfbp2)
-  gene_to_perturb: Igfbp2
-  # Type of perturbation to mathematically simulate: "delete" (currently supported for UMAP extract)
-  type: delete
+  gene_to_perturb: Ece1
+  # Perturbation type: delete | overexpress | inhibit | activate
+  #   delete: remove gene from rank value encoding (only type implemented in ISP UMAP today)
+  #   overexpress: move gene to front of rank value encoding
+  #   inhibit: move gene to lower quartile of rank value encoding
+  #   activate: move gene to higher quartile of rank value encoding
+  type: overexpress 
   
   # Dataset column specifying the cell condition
   state_key: disease
   # The starting cell condition (the one being perturbed)
-  start_state: AD
+  start_state: WT
   # The goal/target condition (the one to compare against)
-  end_state: WT
+  end_state: AD
 
 runtime:
   # Number of labels output by the finetuned Sequence Classification model

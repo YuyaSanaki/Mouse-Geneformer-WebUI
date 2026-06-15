@@ -18,6 +18,18 @@ docker compose up -d webui   # or: docker compose up webui
 
 Open **http://localhost:8501**.
 
+### Remote server access
+
+If Docker runs on a **remote GPU host** (not your laptop), `localhost` in the browser refers to your local machine. Use one of:
+
+| Method | How |
+|--------|-----|
+| **SSH port forwarding** | `ssh -L 8501:localhost:8501 <user>@<server>` — then open `http://localhost:8501` locally |
+| **Direct IP** | `http://<server-lan-or-tailscale-ip>:8501` if the port is reachable on your network |
+| **Cursor Remote** | Forward port **8501** in the IDE Ports panel |
+
+Verify on the server: `curl -I http://localhost:8501` should return HTTP 200 when the container is up.
+
 `WANDB_DISABLED=true` by default. For multi-GPU ISP from the UI, set **`ISP_NUM_GPUS`** in the environment or `.env`.
 
 ---
@@ -48,5 +60,7 @@ After a successful **Pipeline (E2E)** or **ISP UMAP** job, the **Outputs** secti
 |----------|-----|
 | Pipeline (E2E) | [pipeline.md](pipeline.md) |
 | ISP UMAP | [isp_umap.md](isp_umap.md) |
+
+**Pipeline (E2E)** — set `perturbation.genes_to_perturb` in the Config YAML editor (mouse symbols e.g. `Ece1`, `Igfbp2`, or Ensembl IDs; empty `[]` = genome-wide ISP). See [pipeline.md § perturbation](pipeline.md#configure-configpipelineyaml).
 
 Tokenize, fine-tune, and standalone ISP: use CLI (`docker compose run --rm tokenize` / `finetune` / `isp`) — see [tokenization.md](tokenization.md), [fine-tuning.md](fine-tuning.md), [in-silico pertabation.md](in-silico%20pertabation.md).

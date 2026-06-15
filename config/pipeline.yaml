@@ -43,7 +43,7 @@ perturbation:
   start_state: Disease
   end_state: WT
   alt_states: []
-  genes_to_perturb: []
+  genes_to_perturb: [] # Gene symbols (e.g. Ece1, Igfbp2) or Ensembl IDs. Empty = genome-wide ISP.
 
 # Per-stage overrides (optional; merged onto default stage YAML templates)
 stages:

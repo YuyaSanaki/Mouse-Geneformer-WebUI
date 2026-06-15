@@ -143,31 +143,20 @@ def main():
 
     # 2. Get tokens
     from geneformer import tokenizer as gf_tokenizer
-    from geneformer.in_silico_perturber_stats import GENE_NAME_ID_DICTIONARY_FILE
-    
+    from geneformer.gene_ids import resolve_gene_identifier
+
     with open(gf_tokenizer.TOKEN_DICTIONARY_FILE, 'rb') as f:
         token_dict = pickle.load(f)
     pad_token_id = token_dict.get("<pad>", 0)
 
-    # Retrieve Gene Ensembl ID
     raw_gene = cfg["perturbation"]["gene_to_perturb"]
-    ensembl_id = raw_gene
-    
-    # Check if raw_gene is a symbol, if it doesn't start with ENS
-    if not str(raw_gene).startswith("ENS"):
-        logger.info(f"Gene '{raw_gene}' looks like a symbol. Converting to Ensembl ID...")
-        if GENE_NAME_ID_DICTIONARY_FILE.exists():
-            with open(GENE_NAME_ID_DICTIONARY_FILE, "rb") as f:
-                name_id_dict = pickle.load(f)
-            if raw_gene in name_id_dict:
-                ensembl_id = name_id_dict[raw_gene]
-                logger.info(f"Successfully converted {raw_gene} -> {ensembl_id}")
-            else:
-                logger.error(f"Could not find Ensembl ID for symbol {raw_gene}. Stopping.")
-                return
-        else:
-            logger.error(f"Gene name dictionary file not found at {GENE_NAME_ID_DICTIONARY_FILE}. Please supply pure Ensembl IDs.")
-            return
+    try:
+        ensembl_id = resolve_gene_identifier(raw_gene)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return
+    if raw_gene != ensembl_id:
+        logger.info(f"Successfully converted {raw_gene} -> {ensembl_id}")
 
     gene_token = token_dict.get(ensembl_id)
     if not gene_token:

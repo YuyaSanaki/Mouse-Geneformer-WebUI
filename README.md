@@ -66,15 +66,24 @@ docker compose up -d webui
 
 Open **http://localhost:8501** ([Mouse-Geneformer-WebUI](https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI)).
 
+On a **remote GPU server**, `localhost` in your laptop browser does not reach the container. Use **SSH port forwarding** (keep the session open):
+
+```bash
+ssh -L 8501:localhost:8501 <user>@<server>
+```
+
+Then open **http://localhost:8501** locally. Or use the server LAN/Tailscale IP (e.g. `http://<server-ip>:8501`) if your network allows it. See [docs/web-ui.md](docs/web-ui.md).
+
 1. **Study name** — your experiment name (e.g. `MyExperiment`; set **before** uploading the zip).
 2. **Upload** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.tsv.gz`.
 3. **Run type** — **Pipeline (E2E)**.
-4. **ISP states** — pick **start_state** / **end_state** (e.g. AD, WT) → **Apply setting to Config YAML**.
+4. **ISP states** — pick **start_state** / **end_state** (e.g. AD, WT) → **Apply setting to Config YAML**. To test specific genes instead of genome-wide ISP, set `perturbation.genes_to_perturb` in the YAML editor (mouse symbols e.g. `Ece1`, `Igfbp2`, or Ensembl IDs).
 5. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`.
 
-Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md). Default ISP runs all genes (can take ~30 hours on DGX Spark).
+Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md). Default ISP runs all genes (can take ~30 hours on DGX Spark). Use `genes_to_perturb: [Ece1]` (or Ensembl IDs) for a single-gene test run.
 
 More detail: [docs/web-ui.md](docs/web-ui.md).
+
 ![Mouse Geneformer WebUI — study upload, Pipeline (E2E), ISP states, and run directory](docs/webui.png)
 ---
 
@@ -84,6 +93,12 @@ More detail: [docs/web-ui.md](docs/web-ui.md).
 
 ```bash
 docker compose run --rm pipeline
+```
+
+**Standalone ISP** — edit [`config/isp.yaml`](config/isp.yaml). Set `perturbation.genes_to_perturb` to mouse gene symbols (e.g. `[Ece1]`, `[Igfbp2]`) or Ensembl IDs; leave empty `[]` for genome-wide ISP:
+
+```bash
+docker compose run --rm isp
 ```
 
 | Step | Command | Doc |
