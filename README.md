@@ -78,7 +78,7 @@ Then open **http://localhost:8501** locally. Or use the server LAN/Tailscale IP 
 2. **Upload** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.tsv.gz`.
 3. **Run type** — **Pipeline (E2E)**.
 4. **ISP states** — pick **start_state** / **end_state** (e.g. AD, WT) → **Apply setting to Config YAML**. To test specific genes instead of genome-wide ISP, set `perturbation.genes_to_perturb` in the YAML editor (mouse symbols e.g. `Ece1`, `Igfbp2`, or Ensembl IDs).
-5. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`.
+5. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download pipeline run (.zip)** to get that run’s checkpoints, figures, ISP outputs, logs, and configs.
 
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md). Default ISP runs all genes (can take ~30 hours on DGX Spark). Use `genes_to_perturb: [Ece1]` (or Ensembl IDs) for a single-gene test run.
 

@@ -147,8 +147,48 @@ def _guess_output_roots(run_label: str, cfg: dict) -> list[Path]:
         out_root = paths.get("output_root")
         if out_root:
             roots.append(Path(str(out_root)))
-        roots.extend(_latest_pipeline_run_dirs(paths.get("output_root") or "/app/output"))
     return roots
+
+
+def _build_pipeline_run_zip(run_dir: Path) -> tuple[bytes, str] | None:
+    """Zip one pipeline_* run folder (checkpoints, figures, logs, configs, etc.)."""
+    run_dir = run_dir.resolve()
+    if not run_dir.is_dir() or not run_dir.name.startswith("pipeline_"):
+        return None
+
+    entries: list[tuple[Path, str]] = []
+    for fp in sorted(run_dir.rglob("*")):
+        if fp.is_file():
+            rel = fp.relative_to(run_dir)
+            entries.append((fp, f"{run_dir.name}/{rel.as_posix()}"))
+
+    if not entries:
+        return None
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp, arcname in entries:
+            zf.write(fp, arcname=arcname)
+    return buf.getvalue(), f"{run_dir.name}.zip"
+
+
+def _pipeline_run_summary(run_dir: Path) -> list[str]:
+    """Short list of top-level artifacts in a pipeline run folder."""
+    lines: list[str] = []
+    for name in (
+        "figures",
+        "finetune",
+        "isp_results",
+        "ispstats_results",
+        "tokenized_dataset",
+        "stage_configs",
+        "pipeline_run.log",
+        "isp_run.log",
+    ):
+        path = run_dir / name
+        if path.exists():
+            lines.append(f"`{name}/`" if path.is_dir() else f"`{name}`")
+    return lines
 
 
 _FIGURE_SUFFIXES = frozenset({".png", ".pdf", ".svg", ".jpg", ".jpeg", ".webp"})
@@ -748,52 +788,64 @@ def main() -> None:
                 st.error(f"Last job failed (exit {code}).")
 
     st.subheader("Outputs")
-    roots = st.session_state.get("last_output_roots") or []
-    if roots:
-        st.markdown("**Output roots from YAML / recent pipeline runs:**")
-        seen: set[str] = set()
-        for r in roots:
-            p = Path(r)
-            key = str(p.resolve())
-            if key in seen:
-                continue
-            seen.add(key)
-            st.write(f"- `{p}` — exists: {p.is_dir()}")
-            if p.is_dir():
-                try:
-                    subs = sorted(p.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)[:12]
-                    for s in subs:
-                        st.caption(f"  · `{s.name}`")
-                    if p.name.startswith("pipeline_"):
-                        for sub in ("isp_results", "finetune", "tokenized_dataset"):
-                            sp = p / sub
-                            if sp.exists():
-                                st.caption(f"  → `{sub}/`")
-                except OSError:
-                    pass
-    last_run = st.session_state.get("last_run_dir")
     run_label = st.session_state.get("run_type_sel", "")
-    fig_dirs = _discover_figures_dirs(roots, run_label)
-    zip_payload = _build_figures_zip(fig_dirs) if fig_dirs else None
-    if zip_payload:
-        zip_bytes, zip_name = zip_payload
-        st.download_button(
-            label=f"Download figures (.zip) — {zip_name}",
-            data=zip_bytes,
-            file_name=zip_name,
-            mime="application/zip",
-            key="dl_figures_zip",
-            help="PNG/PDF figures from the newest pipeline or ISP run folder under the output roots above.",
-        )
-        for fd in fig_dirs[:3]:
-            n = len(_list_figure_files(fd))
-            st.caption(f"Included: `{fd}` ({n} file(s))")
-    elif roots and st.session_state.get("last_exit_code") == 0:
-        st.caption(
-            "No figure files found yet under the listed output roots "
-            "(expected `figures/*.png` under `pipeline_*` or `isp_*`, or `umap_*.png` for ISP UMAP)."
-        )
+    if run_label == "Pipeline (E2E)":
+        pipeline_run = st.session_state.get("pipeline_output_run_dir")
+        if pipeline_run:
+            run_path = Path(pipeline_run)
+            st.markdown(f"**Pipeline run folder:** `{run_path}`")
+            for item in _pipeline_run_summary(run_path):
+                st.caption(f"  · {item}")
+            zip_payload = _build_pipeline_run_zip(run_path)
+            if zip_payload:
+                zip_bytes, zip_name = zip_payload
+                st.download_button(
+                    label=f"Download pipeline run (.zip) — {zip_name}",
+                    data=zip_bytes,
+                    file_name=zip_name,
+                    mime="application/zip",
+                    key="dl_pipeline_run_zip",
+                    help=(
+                        "Full contents of this pipeline run only: finetune checkpoints, "
+                        "ISP outputs, figures, tokenized dataset, logs, and stage configs."
+                    ),
+                )
+            elif st.session_state.get("last_exit_code") == 0:
+                st.caption("Pipeline run folder exists but contains no files to download yet.")
+        else:
+            st.caption(
+                "After **Run job**, the pipeline run folder appears here. "
+                "Download includes only that run (not other recent pipeline folders)."
+            )
+    else:
+        roots = st.session_state.get("last_output_roots") or []
+        if roots:
+            st.markdown("**Output roots:**")
+            for r in roots:
+                p = Path(r)
+                st.write(f"- `{p}` — exists: {p.is_dir()}")
+        fig_dirs = _discover_figures_dirs(roots, run_label)
+        zip_payload = _build_figures_zip(fig_dirs) if fig_dirs else None
+        if zip_payload:
+            zip_bytes, zip_name = zip_payload
+            st.download_button(
+                label=f"Download figures (.zip) — {zip_name}",
+                data=zip_bytes,
+                file_name=zip_name,
+                mime="application/zip",
+                key="dl_figures_zip",
+                help="PNG/PDF figures from the ISP UMAP run folder.",
+            )
+            for fd in fig_dirs[:3]:
+                n = len(_list_figure_files(fd))
+                st.caption(f"Included: `{fd}` ({n} file(s))")
+        elif roots and st.session_state.get("last_exit_code") == 0:
+            st.caption(
+                "No figure files found yet "
+                "(expected `umap_*.png` under `isp_umap_*`)."
+            )
 
+    last_run = st.session_state.get("last_run_dir")
     if last_run:
         st.markdown(f"**Last run metadata:** `{last_run}`")
         for name in ("config.yaml", "console.log"):

@@ -50,7 +50,7 @@ Uploads:
 
 `{WEBUI_WORKSPACE}/uploads/<session>/<study_name>/`
 
-After a successful **Pipeline (E2E)** or **ISP UMAP** job, the **Outputs** section offers **Download figures (.zip)** when figure files exist under `paths.output_root`.
+After a successful **Pipeline (E2E)** job, the **Outputs** section offers **Download pipeline run (.zip)** for that run only (`pipeline_<UTC>/`: finetune checkpoints, ISP outputs, figures, tokenized dataset, logs, stage configs). **ISP UMAP** still offers **Download figures (.zip)**.
 
 ---
 
