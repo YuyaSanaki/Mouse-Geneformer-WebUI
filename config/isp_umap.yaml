@@ -28,14 +28,14 @@ perturbation:
   #   overexpress: move gene to front of rank value encoding
   #   inhibit: move gene to lower quartile of rank value encoding
   #   activate: move gene to higher quartile of rank value encoding
-  type: overexpress 
+  type: delete 
   
   # Dataset column specifying the cell condition
   state_key: disease
   # The starting cell condition (the one being perturbed)
-  start_state: WT
+  start_state: AD
   # The goal/target condition (the one to compare against)
-  end_state: AD
+  end_state: WT
 
 runtime:
   # Number of labels output by the finetuned Sequence Classification model
