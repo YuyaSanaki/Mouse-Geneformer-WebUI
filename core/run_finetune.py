@@ -1,7 +1,7 @@
 """
 Fine-tuning driver for Geneformer cell/disease classification.
 
-Configuration: YAML file (default /app/config/finetune.yaml).
+Configuration: YAML file (default core/config/finetune.yaml).
 Override path with --config or FINETUNE_CONFIG env var.
 
 Outputs: {output_root}/{YYYYMMDD}/[finetune_<UTC time>/] containing
@@ -12,7 +12,7 @@ Outputs: {output_root}/{YYYYMMDD}/[finetune_<UTC time>/] containing
 
 Usage:
   docker compose run --rm finetune
-  docker compose run --rm finetune --config /app/config/my_finetune.yaml
+  docker compose run --rm finetune --config /app/core/config/my_finetune.yaml
 """
 from __future__ import annotations
 
@@ -341,7 +341,8 @@ def main() -> None:
         category=UserWarning,
     )
 
-    default_cfg = os.environ.get("FINETUNE_CONFIG", "/app/config/finetune.yaml")
+    _core = Path(__file__).resolve().parent
+    default_cfg = os.environ.get("FINETUNE_CONFIG", str(_core / "config" / "finetune.yaml"))
     p = argparse.ArgumentParser(
         description="Fine-tune Geneformer for cell/disease classification."
     )
@@ -349,7 +350,7 @@ def main() -> None:
         "--config",
         type=Path,
         default=Path(default_cfg),
-        help="YAML config path (default: FINETUNE_CONFIG or /app/config/finetune.yaml).",
+        help="YAML config path (default: FINETUNE_CONFIG or core/config/finetune.yaml).",
     )
     args = p.parse_args()
 
@@ -364,6 +365,14 @@ def main() -> None:
         raise ValueError(
             "paths.dataset, paths.geneformer_model, and paths.output_root are all required."
         )
+    model_path = Path(str(model_dir))
+    if not model_path.is_dir() or not (model_path / "config.json").is_file():
+        raise FileNotFoundError(
+            f"Pretrained model not found at {model_path} "
+            "(need config.json and pytorch_model.bin). "
+            "Place Mouse-Geneformer weights under models/mouse-Geneformer/ — see README § Install."
+        )
+    model_dir = str(model_path)
 
     # ── Output directory ──
     date_used = datetime.now().strftime("%Y%m%d")

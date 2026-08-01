@@ -2,6 +2,8 @@
 Mouse Geneformer — Streamlit control panel (same image as CLI; jobs run via subprocess).
 
 Layout: data upload | run type | YAML configuration | execute + live log + outputs.
+
+Monorepo: webui/ talks to core/ only through subprocess + YAML (see docs/architecture.md).
 """
 from __future__ import annotations
 
@@ -19,27 +21,38 @@ import streamlit as st
 import yaml
 
 def _repo_root() -> Path:
-    """Repo root (contains streamlit_upload.py, data_input_layout.py)."""
+    """Monorepo root (contains core/, webui/, contracts/)."""
     env = os.environ.get("WEBUI_ROOT")
     if env:
         return Path(env).resolve()
-    # streamlit run .../streamlit_app/app.py often sets cwd to streamlit_app/, not /app
-    candidate = Path(__file__).resolve().parent.parent
-    if (candidate / "streamlit_upload.py").is_file():
+    # webui/streamlit_app/app.py → repo root is parents[2]
+    candidate = Path(__file__).resolve().parents[2]
+    if (candidate / "core").is_dir() and (candidate / "webui").is_dir():
         return candidate
+    # streamlit run may set cwd oddly; fall back one level if layout is flat webui/
+    alt = Path(__file__).resolve().parents[1]
+    if (alt.parent / "core").is_dir():
+        return alt.parent
     return Path(os.getcwd()).resolve()
 
 
 ROOT = _repo_root()
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+CORE = ROOT / "core"
+CONTRACTS = ROOT / "contracts"
+WEBUI_DIR = ROOT / "webui"
+
+# Ensure monorepo packages resolve even if PYTHONPATH was not set (local streamlit).
+for _p in (CORE, CONTRACTS, WEBUI_DIR):
+    s = str(_p)
+    if s not in sys.path:
+        sys.path.insert(0, s)
 
 
 def _import_data_input_layout():
-    """Load data_input_layout from repo root (avoids stale sys.modules / wrong path)."""
+    """Load contracts/data_input_layout (avoids stale sys.modules / wrong path)."""
     import importlib.util
 
-    path = ROOT / "data_input_layout.py"
+    path = CONTRACTS / "data_input_layout.py"
     if not path.is_file():
         raise ImportError(f"Missing {path}")
     spec = importlib.util.spec_from_file_location("data_input_layout", path)
@@ -86,7 +99,7 @@ RUN_FILES = {
 
 
 def _default_config_path(run_label: str) -> Path:
-    return ROOT / "config" / RUN_FILES[run_label]
+    return CORE / "config" / RUN_FILES[run_label]
 
 
 def _load_default_yaml() -> None:
@@ -125,12 +138,19 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
     cfg = str(config_path)
     env = os.environ.copy()
     env.setdefault("WANDB_DISABLED", "true")
+    # Child jobs import geneformer / pipeline_lib / data_input_layout via PYTHONPATH.
+    monorepo_path = os.pathsep.join(str(p) for p in (CORE, CONTRACTS, WEBUI_DIR))
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        monorepo_path if not existing else monorepo_path + os.pathsep + existing
+    )
 
+    # WebUI → core: subprocess + YAML only (no direct core imports for job execution).
     if run_label == "ISP UMAP":
-        cmd = ["python3", str(ROOT / "run_isp_umap.py"), "--config", cfg]
+        cmd = ["python3", str(CORE / "run_isp_umap.py"), "--config", cfg]
         env["ISP_UMAP_CONFIG"] = cfg
     elif run_label == "Pipeline (E2E)":
-        cmd = ["python3", str(ROOT / "run_pipeline.py"), "--config", cfg]
+        cmd = ["python3", str(CORE / "run_pipeline.py"), "--config", cfg]
         env["PIPELINE_CONFIG"] = cfg
         env.setdefault("ISP_NUM_GPUS", os.environ.get("ISP_NUM_GPUS", "1"))
     else:
@@ -525,14 +545,14 @@ def _detected_states_from_upload(upload_dir: Path) -> list[str]:
         return []
 
 
-def _patch_pipeline_yaml(
+def _build_patched_pipeline_yaml(
     *,
     input_dir: str | Path | None = None,
     output_prefix: str | None = "__unset__",
     isp_start_state: str | None = None,
     isp_end_state: str | None = None,
-) -> bool:
-    """Patch pipeline YAML fields in the editor."""
+) -> str:
+    """Return patched pipeline YAML text without touching session_state widgets."""
     cfg = _read_pipeline_yaml()
     cfg.setdefault("data", {})
     if input_dir is not None:
@@ -546,11 +566,78 @@ def _patch_pipeline_yaml(
             cfg["perturbation"]["organ_data"] = isp_start_state
         if isp_end_state is not None:
             cfg["perturbation"]["end_state"] = isp_end_state
-    dumped = yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
+def _patch_pipeline_yaml(
+    *,
+    input_dir: str | Path | None = None,
+    output_prefix: str | None = "__unset__",
+    isp_start_state: str | None = None,
+    isp_end_state: str | None = None,
+) -> bool:
+    """Patch pipeline YAML fields in the editor (must run before yaml_editor widget, or via button+rerun)."""
+    dumped = _build_patched_pipeline_yaml(
+        input_dir=input_dir,
+        output_prefix=output_prefix,
+        isp_start_state=isp_start_state,
+        isp_end_state=isp_end_state,
+    )
     st.session_state["yaml_editor"] = dumped
     if input_dir is not None:
         st.session_state["pipeline_tokenize_dir"] = str(input_dir)
     return True
+
+
+def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | None]:
+    """
+    Ensure Pipeline YAML points at the uploaded study before starting a job.
+
+    Returns (yaml_text, error_message). On success error_message is None.
+    """
+    study_name = normalize_study_name(_raw_study_name())
+    if not study_name:
+        return None, (
+            "Set **Study name** to the experiment folder (the name used when uploading the zip), "
+            "then click **Apply setting to Config YAML** or Run again."
+        )
+
+    tokenize_dir = resolve_study_tokenize_dir(upload_dir, study_name)
+    if tokenize_dir is None:
+        target = study_folder(upload_dir, study_name)
+        others = [
+            p.name
+            for p in sorted(upload_dir.iterdir())
+            if p.is_dir() and not p.name.startswith(".")
+        ]
+        msg = (
+            f"No 10x sample folders under study **{study_name}** "
+            f"(`{target}`).\n\n"
+            "Upload a `.zip` whose contents are sample folders "
+            "(`Time-State-Suffix/…`), with **Study name** matching that experiment."
+        )
+        if others:
+            msg += f"\n\nFolders in this upload session: `{', '.join(others)}` — set Study name to one of these."
+        else:
+            msg += "\n\nNo uploads in this session yet."
+        return None, msg
+
+    samples = discover_sample_dirs(tokenize_dir)
+    if not samples:
+        return None, (
+            f"Study root `{tokenize_dir}` has no detectable 10x samples. "
+            "Check folder names and `barcodes/features/matrix` files."
+        )
+
+    # Build YAML for the job without writing session_state["yaml_editor"] after the widget exists.
+    yaml_text = _build_patched_pipeline_yaml(
+        input_dir=tokenize_dir,
+        output_prefix=study_name,
+        isp_start_state=st.session_state.get("pipeline_isp_start_state"),
+        isp_end_state=st.session_state.get("pipeline_isp_end_state"),
+    )
+    st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
+    return yaml_text, None
 
 
 def _apply_isp_states_to_yaml() -> None:
@@ -598,7 +685,10 @@ def main() -> None:
             label_visibility="collapsed",
             placeholder="Experiment name (e.g. MyExperiment)",
         )
-        st.caption("Enter your **experiment name** before uploading a .zip (folder + `output_prefix`).")
+        st.caption(
+            "Enter the **experiment name** before uploading (becomes the study folder + `output_prefix`). "
+            "Must match the name you use for Run — e.g. if the zip imported as `test`, set Study name to `test`."
+        )
         st.subheader("Upload data.zip")
         st.caption(
             "Zip with compressed `/data/` sample subfolders named `Time-State-Suffix/` "
@@ -722,12 +812,25 @@ def main() -> None:
         _render_run_directory_output(run_label)
 
     if run_clicked:
+        run_label = st.session_state["run_type_sel"]
         yaml_text = st.session_state.get("yaml_editor", "")
-        try:
-            cfg_obj = yaml.safe_load(yaml_text) or {}
-        except yaml.YAMLError as e:
-            st.error(f"Invalid YAML: {e}")
-            cfg_obj = None
+        cfg_obj = None
+        prep_failed = False
+
+        if run_label == "Pipeline (E2E)":
+            prepared, prep_err = _prepare_pipeline_yaml_for_run(upload_dir)
+            if prep_err:
+                st.error(prep_err)
+                prep_failed = True
+            else:
+                yaml_text = prepared or yaml_text
+
+        if not prep_failed:
+            try:
+                cfg_obj = yaml.safe_load(yaml_text) or {}
+            except yaml.YAMLError as e:
+                st.error(f"Invalid YAML: {e}")
+                cfg_obj = None
 
         if cfg_obj is not None:
             run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
@@ -737,7 +840,6 @@ def main() -> None:
             cfg_path.write_text(yaml_text, encoding="utf-8")
             log_path = run_dir / "console.log"
 
-            run_label = st.session_state["run_type_sel"]
             try:
                 cmd, env = _build_command_and_env(run_label, cfg_path)
             except ValueError as e:
@@ -751,6 +853,8 @@ def main() -> None:
                 if run_label == "Pipeline (E2E)":
                     st.session_state["pipeline_job_started_ts"] = time.time()
                     st.session_state.pop("pipeline_output_run_dir", None)
+                    input_shown = str((cfg_obj.get("data") or {}).get("input_dir") or "")
+                    st.info(f"Using `data.input_dir` = `{input_shown}`")
                 log_file = open(log_path, "w", encoding="utf-8", buffering=1)
                 try:
                     p = subprocess.Popen(

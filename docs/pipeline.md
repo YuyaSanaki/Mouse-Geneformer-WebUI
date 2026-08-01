@@ -2,7 +2,7 @@
 
 One config and one command run **Tokenize → Fine-tune → ISP** in order. Dataset, checkpoint, and ISP paths are **derived automatically** from `data.input_dir` — you do not copy paths between stage YAML files.
 
-Entrypoint: [`run_pipeline.py`](../run_pipeline.py). Configuration: [`config/pipeline.yaml`](../config/pipeline.yaml).
+Entrypoint: [`run_pipeline.py`](../core/run_pipeline.py). Configuration: [`core/config/pipeline.yaml`](../core/config/pipeline.yaml).
 
 ---
 
@@ -17,10 +17,10 @@ docker compose run --rm pipeline
 **Custom config:**
 
 ```bash
-docker compose run --rm pipeline python3 /app/run_pipeline.py --config /app/config/my_pipeline.yaml
+docker compose run --rm pipeline python3 /app/core/run_pipeline.py --config /app/core/config/my_pipeline.yaml
 ```
 
-Override via env: `PIPELINE_CONFIG=/app/config/my_pipeline.yaml`.
+Override via env: `PIPELINE_CONFIG=/app/core/config/my_pipeline.yaml`.
 
 ---
 
@@ -63,11 +63,11 @@ Use **three hyphen-separated segments**: `Time-Condition-Replicate` (e.g. `1w-Di
 
 ---
 
-## Configure `config/pipeline.yaml`
+## Configure `core/config/pipeline.yaml`
 
-Edit [`config/pipeline.yaml`](../config/pipeline.yaml) on the host before running. In the container it is `/app/config/pipeline.yaml` (repo bind-mounted at `/app`).
+Edit [`core/config/pipeline.yaml`](../core/config/pipeline.yaml) on the host before running. In the container it is `/app/core/config/pipeline.yaml` (repo bind-mounted at `/app`).
 
-You only need to set **`data.input_dir`** and **`perturbation`** in most cases. Tokenize, fine-tune, and ISP paths are filled under `{paths.output_root}/{DATE}/pipeline_<UTC>/` automatically ([`pipeline_lib.py`](../pipeline_lib.py)).
+You only need to set **`data.input_dir`** and **`perturbation`** in most cases. Tokenize, fine-tune, and ISP paths are filled under `{paths.output_root}/{DATE}/pipeline_<UTC>/` automatically ([`pipeline_lib.py`](../core/pipeline_lib.py)).
 
 ### Example
 
@@ -125,11 +125,11 @@ Copied into each stage config under `stage_configs/` when the pipeline runs.
 | `max_cells` | **Tokenize** (`tokenizer.max_cells`) — cap on cells tokenized per run |
 | `forward_batch_size` | **ISP** (`runtime.forward_batch_size`) — GPU minibatch for transformer forwards |
 
-Standalone jobs (`docker compose run tokenize` / `finetune` / `isp`) still use [`config/tokenize.yaml`](../config/tokenize.yaml), [`config/finetune.yaml`](../config/finetune.yaml), and [`config/isp.yaml`](../config/isp.yaml) directly.
+Standalone jobs (`docker compose run tokenize` / `finetune` / `isp`) still use [`core/config/tokenize.yaml`](../core/config/tokenize.yaml), [`core/config/finetune.yaml`](../core/config/finetune.yaml), and [`core/config/isp.yaml`](../core/config/isp.yaml) directly.
 
 ### `perturbation`
 
-Copied into the generated ISP config. Same keys as [`config/isp.yaml`](../config/isp.yaml).
+Copied into the generated ISP config. Same keys as [`core/config/isp.yaml`](../core/config/isp.yaml).
 
 | Field | Role |
 |-------|------|
@@ -150,7 +150,7 @@ perturbation:
 
 ### `stages` (optional overrides)
 
-Merged onto the default templates [`config/tokenize.yaml`](../config/tokenize.yaml), [`config/finetune.yaml`](../config/finetune.yaml), and [`config/isp.yaml`](../config/isp.yaml). Written copies land in `stage_configs/` under the run folder.
+Merged onto the default templates [`core/config/tokenize.yaml`](../core/config/tokenize.yaml), [`core/config/finetune.yaml`](../core/config/finetune.yaml), and [`core/config/isp.yaml`](../core/config/isp.yaml). Written copies land in `stage_configs/` under the run folder.
 
 Example — add metadata before fine-tune without editing the global finetune template:
 
@@ -218,9 +218,9 @@ Each run creates:
 Inside the container (or with repo mounted at `/app`):
 
 ```bash
-python3 run_pipeline.py --skip-tokenize    # dataset already at derived path
-python3 run_pipeline.py --skip-finetune    # use existing finetune/all_run1
-python3 run_pipeline.py --skip-isp         # stop after fine-tuning
+python3 core/run_pipeline.py --skip-tokenize    # dataset already at derived path
+python3 core/run_pipeline.py --skip-finetune    # use existing finetune/all_run1
+python3 core/run_pipeline.py --skip-isp         # stop after fine-tuning
 ```
 
 ---

@@ -1,6 +1,6 @@
 # =============================================================================
 # ISP UMAP Generator Configuration
-# Path: /app/config/isp_umap.yaml
+# Path: /app/core/config/isp_umap.yaml
 # =============================================================================
 
 paths:

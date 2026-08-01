@@ -7,7 +7,7 @@ data:
   input_type: "single-cell"
 
   # Study root: /data/ExperimentName/ with subfolders Time-Condition-Replicate/*.gz
-  # (or /data/ for multiple ExperimentName children). See data_input_layout.py.
+  # (or /data/ for multiple ExperimentName children). See contracts/data_input_layout.py.
   input_dir: "/app/data/AsanoPIPand3and5w/"
 
   # Intermediate directory for .loom files if starting from single-cell

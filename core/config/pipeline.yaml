@@ -16,8 +16,10 @@
 
 data:
   # "single-cell" (barcodes/features/matrix) or "loom"
-  input_type: single-cell 
-  input_dir: "/app/data/MyExperiment/"
+  input_type: single-cell
+  # CLI: path to study root (parent of Time-State-Suffix sample folders).
+  # WebUI overwrites this with the uploaded study path on Run / Apply.
+  input_dir: ""
   # null = basename of input_dir (e.g. example_mouse_study)
   output_prefix: null
 

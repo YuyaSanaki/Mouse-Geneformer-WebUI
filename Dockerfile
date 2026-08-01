@@ -1,6 +1,8 @@
 FROM nvcr.io/nvidia/pytorch:25.03-py3
 
 ENV DEBIAN_FRONTEND=noninteractive
+# core = geneformer + runners; contracts = shared layout; webui = Streamlit only
+ENV PYTHONPATH=/app/core:/app/contracts:/app/webui
 
 WORKDIR /app
 

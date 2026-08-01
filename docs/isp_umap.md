@@ -6,7 +6,7 @@ The **ISP UMAP** service calculates and visualizes how **each cell** moves when 
 
 ## Configuration
 
-The service is fully configured via [`config/isp_umap.yaml`](../config/isp_umap.yaml). You may modify this file to point to different datasets, fine-tuned models, or target genes.
+The service is fully configured via [`core/config/isp_umap.yaml`](../core/config/isp_umap.yaml). You may modify this file to point to different datasets, fine-tuned models, or target genes.
 
 Key configurations to note:
 

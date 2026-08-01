@@ -1,6 +1,6 @@
 # =============================================================================
 # In-silico perturbation — run_isp.py
-# Default path in Docker: /app/config/isp.yaml  (override: --config or ISP_CONFIG)
+# Default path in Docker: /app/core/config/isp.yaml  (override: --config or ISP_CONFIG)
 # =============================================================================
 
 paths:

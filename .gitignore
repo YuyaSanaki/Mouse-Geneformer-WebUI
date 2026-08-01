@@ -14,7 +14,8 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 
-# Large dictionary files
+# Large dictionary files (download locally; see README § Install)
+/core/geneformer/dicts/
 /geneformer/dicts/
 
 # Local notes

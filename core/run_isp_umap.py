@@ -106,9 +106,14 @@ def build_per_cell_shift_table(
 
 def main():
     parser = argparse.ArgumentParser(description="ISP UMAP Plotter")
-    default_cfg = os.environ.get("ISP_UMAP_CONFIG", "/app/config/isp_umap.yaml")
-    parser.add_argument("--config", type=str, default=default_cfg, 
-                        help="YAML config path (default: /app/config/isp_umap.yaml)")
+    _core = Path(__file__).resolve().parent
+    default_cfg = os.environ.get("ISP_UMAP_CONFIG", str(_core / "config" / "isp_umap.yaml"))
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=default_cfg,
+        help="YAML config path (default: ISP_UMAP_CONFIG or core/config/isp_umap.yaml)",
+    )
     args = parser.parse_args()
     
     cfg_path = Path(args.config)

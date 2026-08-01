@@ -8,9 +8,12 @@
 # aarch64 (ARM64, e.g. DGX Spark). Docker pulls the matching image arch. LD_PRELOAD for
 # the OpenMP workaround is set inside the container only when uname -m is aarch64
 # (scripts/container-entrypoint.sh). Override with env LD_PRELOAD if needed.
+#
+# Layout: core/ (jobs + geneformer), webui/ (Streamlit), contracts/ (shared layout rules).
+# WebUI → core is subprocess + YAML only; see docs/architecture.md.
 
 x-geneformer-base: &geneformer-base
-  image: mouse-geneformer:latest
+  image: mouse-geneformer-webui:latest
   user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
   volumes:
     - .:/app
@@ -25,19 +28,21 @@ x-geneformer-base: &geneformer-base
   # Optional: set LD_PRELOAD in .env to override the entrypoint’s aarch64 default.
   environment:
     - LD_PRELOAD=${LD_PRELOAD:-}
+    - PYTHONPATH=/app/core:/app/contracts:/app/webui
   ipc: host
   working_dir: /app
 
 services:
-  mouse-geneformer:
+  # Build target / Jupyter Lab. Image name is distinct from upstream mouse-geneformer.
+  mouse-geneformer-webui:
     <<: *geneformer-base
     build: .
-    container_name: mouse_geneformer_container
+    container_name: mouse_geneformer_webui_lab
     ports:
       - "8888:8888"
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token='' --NotebookApp.password=''
 
-  # Streamlit Web UI (same image, jobs = subprocess to run_isp / tokenize / finetune / isp_umap):
+  # Streamlit Web UI (same image, jobs = subprocess to core runners):
   #   docker compose up -d webui
   #   http://localhost:8501
   webui:
@@ -47,13 +52,14 @@ services:
       - "8501:8501"
     environment:
       - WEBUI_ROOT=/app
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
       - WANDB_DISABLED=true
       # Megabytes; overrides default 200 MB cap on st.file_uploader (see .streamlit/config.toml).
       - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1024000
     command:
       - streamlit
       - run
-      - /app/streamlit_app/app.py
+      - /app/webui/streamlit_app/app.py
       - --server.address=0.0.0.0
       - --server.port=8501
       - --server.maxUploadSize
@@ -61,65 +67,69 @@ services:
       - --browser.gatherUsageStats=false
 
   # One-shot ISP run: docker compose run --rm isp
-  # (uses the same image as mouse-geneformer; build that image first: docker compose build mouse-geneformer)
+  # (same image; build first: docker compose build mouse-geneformer-webui)
   isp:
     <<: *geneformer-base
-    container_name: mouse_geneformer_isp
+    container_name: mouse_geneformer_webui_isp
     command:
       - accelerate
       - launch
       - --num_processes
       - "${ISP_NUM_GPUS:-1}"
-      - /app/run_isp.py
+      - /app/core/run_isp.py
       - --config
-      - /app/config/isp.yaml
+      - /app/core/config/isp.yaml
 
   # Tokenization pipeline: docker compose run --rm tokenize
   tokenize:
     <<: *geneformer-base
-    container_name: mouse_geneformer_tokenize
+    container_name: mouse_geneformer_webui_tokenize
     environment:
-      - TOKENIZE_CONFIG=/app/config/tokenize.yaml
+      - TOKENIZE_CONFIG=/app/core/config/tokenize.yaml
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
     command:
       - python3
-      - /app/execute_tokenizer_pipeline.py
+      - /app/core/execute_tokenizer_pipeline.py
 
   # Fine-tuning: docker compose run --rm finetune
   finetune:
     <<: *geneformer-base
-    container_name: mouse_geneformer_finetune
+    container_name: mouse_geneformer_webui_finetune
     environment:
       - LD_PRELOAD=${LD_PRELOAD:-}
-      - FINETUNE_CONFIG=/app/config/finetune.yaml
+      - FINETUNE_CONFIG=/app/core/config/finetune.yaml
       - WANDB_DISABLED=true
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
     command:
       - python3
-      - /app/run_finetune.py
+      - /app/core/run_finetune.py
       - --config
-      - /app/config/finetune.yaml
+      - /app/core/config/finetune.yaml
 
   # End-to-end Tokenize → Fine-tune → ISP: docker compose run --rm pipeline
   pipeline:
     <<: *geneformer-base
-    container_name: mouse_geneformer_pipeline
+    container_name: mouse_geneformer_webui_pipeline
     environment:
-      - PIPELINE_CONFIG=/app/config/pipeline.yaml
+      - PIPELINE_CONFIG=/app/core/config/pipeline.yaml
       - WANDB_DISABLED=true
       - ISP_NUM_GPUS=${ISP_NUM_GPUS:-1}
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
     command:
       - python3
-      - /app/run_pipeline.py
+      - /app/core/run_pipeline.py
       - --config
-      - /app/config/pipeline.yaml
+      - /app/core/config/pipeline.yaml
 
   # ISP UMAP Plot Generation: docker compose run --rm isp_umap
   isp_umap:
     <<: *geneformer-base
-    container_name: mouse_geneformer_isp_umap
+    container_name: mouse_geneformer_webui_isp_umap
     environment:
-      - ISP_UMAP_CONFIG=/app/config/isp_umap.yaml
+      - ISP_UMAP_CONFIG=/app/core/config/isp_umap.yaml
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
     command:
       - python3
-      - /app/run_isp_umap.py
+      - /app/core/run_isp_umap.py
       - --config
-      - /app/config/isp_umap.yaml
+      - /app/core/config/isp_umap.yaml

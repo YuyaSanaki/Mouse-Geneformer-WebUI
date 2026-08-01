@@ -1,7 +1,7 @@
 """
 In-silico perturbation driver (notebook logic as a script).
 
-Configuration: YAML file (default /app/config/isp.yaml). Override path with --config or ISP_CONFIG.
+Configuration: YAML file (default core/config/isp.yaml). Override path with --config or ISP_CONFIG.
 CLI --forward-batch-size / --nproc override the YAML runtime section when passed.
 Outputs: with paths.output_root, writes to {output_root}/[{YYYYMMDD}/][run_folder/]isp_results and .../ispstats_results.
 Date folder (default on): --output-date, ISP_OUTPUT_DATE, or today; disable with paths.output_date_subdir false, ISP_OUTPUT_DATE_SUBDIR=0, or --no-output-date-subdir.
@@ -238,13 +238,14 @@ def _merge_isp_run_metadata(run_root: Path, updates: dict[str, Any]) -> None:
 
 def main() -> None:
     accelerator = Accelerator()
-    default_cfg = os.environ.get("ISP_CONFIG", "/app/config/isp.yaml")
+    _core = Path(__file__).resolve().parent
+    default_cfg = os.environ.get("ISP_CONFIG", str(_core / "config" / "isp.yaml"))
     p = argparse.ArgumentParser(description="Run Geneformer in-silico perturbation + stats.")
     p.add_argument(
         "--config",
         type=Path,
         default=Path(default_cfg),
-        help="YAML config path (default: ISP_CONFIG or /app/config/isp.yaml).",
+        help="YAML config path (default: ISP_CONFIG or core/config/isp.yaml).",
     )
     p.add_argument(
         "--forward-batch-size",

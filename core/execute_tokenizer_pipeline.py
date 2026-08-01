@@ -88,7 +88,10 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
 
 
 def main():
-    config_path = Path(os.getenv("TOKENIZE_CONFIG", "/app/config/tokenize.yaml")).expanduser()
+    _core = Path(__file__).resolve().parent
+    config_path = Path(
+        os.getenv("TOKENIZE_CONFIG", str(_core / "config" / "tokenize.yaml"))
+    ).expanduser()
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 

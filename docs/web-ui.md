@@ -2,17 +2,18 @@
 
 [Mouse-Geneformer-WebUI](https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI) on GitHub.
 
-The Web UI is documented in the main [README § Streamlit Web UI](../README.md#streamlit-web-ui). This page adds Compose and path details.
+The Web UI is documented in the main [README § Streamlit Web UI](../README.md#streamlit-web-ui). Boundaries and the subprocess/YAML contract: [architecture.md](architecture.md).
 
-- App: [`streamlit_app/app.py`](../streamlit_app/app.py)
+- App: [`webui/streamlit_app/app.py`](../webui/streamlit_app/app.py)
 - Compose service: [`docker-compose.yml`](../docker-compose.yml) (`webui`)
+- Job templates: [`core/config/`](../core/config/)
 
 ---
 
 ## Start
 
 ```bash
-docker compose build mouse-geneformer
+docker compose build mouse-geneformer-webui
 docker compose up -d webui   # or: docker compose up webui
 ```
 
@@ -61,6 +62,6 @@ After a successful **Pipeline (E2E)** job, the **Outputs** section offers **Down
 | Pipeline (E2E) | [pipeline.md](pipeline.md) |
 | ISP UMAP | [isp_umap.md](isp_umap.md) |
 
-**Pipeline (E2E)** — set `perturbation.genes_to_perturb` in the Config YAML editor (mouse symbols e.g. `Ece1`, `Igfbp2`, or Ensembl IDs; empty `[]` = genome-wide ISP). See [pipeline.md § perturbation](pipeline.md#configure-configpipelineyaml).
+**Pipeline (E2E)** — set `perturbation.genes_to_perturb` in the Config YAML editor (mouse symbols e.g. `Ece1`, `Igfbp2`, or Ensembl IDs; empty `[]` = genome-wide ISP). See [pipeline.md § perturbation](pipeline.md#configure-coreconfigpipelineyaml).
 
 Tokenize, fine-tune, and standalone ISP: use CLI (`docker compose run --rm tokenize` / `finetune` / `isp`) — see [tokenization.md](tokenization.md), [fine-tuning.md](fine-tuning.md), [in-silico pertabation.md](in-silico%20pertabation.md).

@@ -2,6 +2,8 @@
 
 This is a refactored clone of [mouse-Geneformer](https://github.com/machine-perception-robotics-group/Mouse-Geneformer). It runs on an NVIDIA GPU workstation or server with Docker. All services use Docker Compose (the upstream repo used Jupyter). You can run jobs from the **Web UI** or the **CLI**.
 
+**Monorepo:** `core/` (Geneformer + CLI), `webui/` (Streamlit), `contracts/` (shared input layout). WebUI talks to core only via **subprocess + YAML**. Layout and contract: [docs/architecture.md](docs/architecture.md). This GitHub repo is the public surface of that monorepo, not a separate diverging codebase.
+
 
 
 ## Requirements
@@ -34,7 +36,7 @@ Primary testing is on **DGX Spark (aarch64)**; x86\_64 NVIDIA hosts are supporte
 
 3. **Build the image** (Streamlit, ISP, tokenize, pipeline, fine-tune):
    ```bash
-   docker compose build mouse-geneformer
+   docker compose build mouse-geneformer-webui
    ```
    Re-run after `Dockerfile` or dependency changes.
 
@@ -45,20 +47,25 @@ Primary testing is on **DGX Spark (aarch64)**; x86\_64 NVIDIA hosts are supporte
    cd ../..
    ```
 
-5. **`MLM-re_token_dictionary_v1.pkl`** — if missing after LFS pull, download into `data/Mouse-Genecorpus-20M/`:
+5. **Token dictionaries** under `core/geneformer/dicts/` (required to import `geneformer` / run any pipeline job). If missing after LFS pull, download at least:
    - [MLM-re_token_dictionary_v1.pkl](https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl)
+   - [MLM-re_token_dictionary_v1_GeneSymbol_to_EnsemblID.pkl](https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1_GeneSymbol_to_EnsemblID.pkl)
    ```bash
-   wget -O data/Mouse-Genecorpus-20M/MLM-re_token_dictionary_v1.pkl \
+   mkdir -p core/geneformer/dicts
+   wget -O core/geneformer/dicts/MLM-re_token_dictionary_v1.pkl \
      'https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1.pkl'
+   wget -O core/geneformer/dicts/MLM-re_token_dictionary_v1_GeneSymbol_to_EnsemblID.pkl \
+     'https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M/resolve/main/MLM-re_token_dictionary_v1_GeneSymbol_to_EnsemblID.pkl'
    ```
+   Also place `mouse_gene_median_dictionary.pkl` in the same folder when tokenizing (from the Mouse-Geneformer / Mouse-Genecorpus assets).
 
----
+6. **Pretrained model** at `models/mouse-Geneformer/` (`config.json`, `pytorch_model.bin`). Required for fine-tune / E2E pipeline. Copy from an existing Mouse-Geneformer checkout, or download from the project’s Hugging Face / release assets into that directory.
 
 <a id="streamlit-web-ui"></a>
 
 ## Quick start (Web UI — Pipeline E2E)
 
-After [Install](#install), run the full **Tokenize → Fine-tune → ISP** pipeline from the browser (same as `run_pipeline.py` on the CLI).
+After [Install](#install), run the full **Tokenize → Fine-tune → ISP** pipeline from the browser (same as `core/run_pipeline.py` on the CLI).
 
 ```bash
 docker compose up -d webui
@@ -89,13 +96,13 @@ More detail: [docs/web-ui.md](docs/web-ui.md).
 
 ## CLI
 
-**End-to-end** — edit [`config/pipeline.yaml`](config/pipeline.yaml), then:
+**End-to-end** — edit [`core/config/pipeline.yaml`](core/config/pipeline.yaml), then:
 
 ```bash
 docker compose run --rm pipeline
 ```
 
-**Standalone ISP** — edit [`config/isp.yaml`](config/isp.yaml). Set `perturbation.genes_to_perturb` to mouse gene symbols (e.g. `[Ece1]`, `[Igfbp2]`) or Ensembl IDs; leave empty `[]` for genome-wide ISP:
+**Standalone ISP** — edit [`core/config/isp.yaml`](core/config/isp.yaml). Set `perturbation.genes_to_perturb` to mouse gene symbols (e.g. `[Ece1]`, `[Igfbp2]`) or Ensembl IDs; leave empty `[]` for genome-wide ISP:
 
 ```bash
 docker compose run --rm isp
@@ -114,6 +121,7 @@ docker compose run --rm isp
 
 | Topic | Guide |
 |-------|--------|
+| **Architecture / boundaries** | [docs/architecture.md](docs/architecture.md) |
 | **Tokenization** | [docs/tokenization.md](docs/tokenization.md) |
 | **Fine-tuning** | [docs/fine-tuning.md](docs/fine-tuning.md) |
 | **ISP** | [docs/in-silico pertabation.md](docs/in-silico%20pertabation.md) |

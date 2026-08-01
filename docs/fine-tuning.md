@@ -2,7 +2,7 @@
 
 This guide describes the **end-to-end workflow** to fine-tune Mouse-Geneformer on **cell type classification** or **disease classification** tasks. The fine-tuned model can then be used by the ISP service for more targeted perturbation analysis.
 
-Entrypoint: [`run_finetune.py`](../run_finetune.py). Configuration: [`config/finetune.yaml`](../config/finetune.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
+Entrypoint: [`run_finetune.py`](../core/run_finetune.py). Configuration: [`core/config/finetune.yaml`](../core/config/finetune.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
 
 ---
 
@@ -40,7 +40,7 @@ Before fine-tuning you need:
 
 2. **The pretrained model** — default: `/app/models/mouse-Geneformer/` (contains `config.json`, `pytorch_model.bin`).
 
-3. **Docker image built** — `docker compose build mouse-geneformer`.
+3. **Docker image built** — `docker compose build mouse-geneformer-webui`.
 
 ### What if my dataset is missing columns?
 
@@ -48,7 +48,7 @@ The fine-tuning config has a **metadata injection** section that can add, rename
 
 ---
 
-## 3. Configure `config/finetune.yaml`
+## 3. Configure `core/config/finetune.yaml`
 
 The config has six sections. Here is each with explanation:
 
@@ -219,12 +219,12 @@ From the repository root:
 docker compose run --rm finetune
 ```
 
-This executes `python3 /app/run_finetune.py --config /app/config/finetune.yaml` inside the container with GPU access.
+This executes `python3 /app/core/run_finetune.py --config /app/core/config/finetune.yaml` inside the container with GPU access.
 
 ### Custom config
 
 ```bash
-docker compose run --rm finetune python3 /app/run_finetune.py --config /app/config/my_custom_finetune.yaml
+docker compose run --rm finetune python3 /app/core/run_finetune.py --config /app/core/config/my_custom_finetune.yaml
 ```
 
 ---
@@ -340,7 +340,7 @@ output/20260410/finetune_.../
 
 | Variable | Meaning |
 |----------|---------|
-| `FINETUNE_CONFIG` | Override config path (default `/app/config/finetune.yaml`) |
+| `FINETUNE_CONFIG` | Override config path (default `/app/core/config/finetune.yaml`) |
 | `WANDB_DISABLED` | Set to `true` (default in Compose) to disable Weights & Biases |
 | `FINETUNE_LOG_MAX_BYTES` | Max size of `finetune_run.log` before rotation (default 50 MiB) |
 | `FINETUNE_LOG_BACKUP_COUNT` | Rotated backups to keep (default `5`) |

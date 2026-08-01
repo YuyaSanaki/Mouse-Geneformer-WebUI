@@ -2,7 +2,7 @@
 
 End-to-end workflow to run Geneformer ISP on a **new experiment** (tissue, genotype, or condition).
 
-Entrypoint: [`run_isp.py`](../run_isp.py). Configuration: [`config/isp.yaml`](../config/isp.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
+Entrypoint: [`run_isp.py`](../core/run_isp.py). Configuration: [`core/config/isp.yaml`](../core/config/isp.yaml). Docker: [`docker-compose.yml`](../docker-compose.yml).
 
 **Prerequisite:** a tokenized `.dataset` — see [**tokenization.md**](tokenization.md).
 
@@ -17,7 +17,7 @@ Entrypoint: [`run_isp.py`](../run_isp.py). Configuration: [`config/isp.yaml`](..
 
 ---
 
-## 2. Configure `config/isp.yaml`
+## 2. Configure `core/config/isp.yaml`
 
 Align paths and labels with your tokenized dataset.
 
@@ -44,7 +44,7 @@ Align paths and labels with your tokenized dataset.
 
 ### `perturbation.genes_to_perturb`
 
-Controls which genes are perturbed. Symbols and Ensembl IDs are both accepted; [`run_isp.py`](../run_isp.py) resolves symbols via [`geneformer/gene_ids.py`](../geneformer/gene_ids.py).
+Controls which genes are perturbed. Symbols and Ensembl IDs are both accepted; [`run_isp.py`](../core/run_isp.py) resolves symbols via [`geneformer/gene_ids.py`](../geneformer/gene_ids.py).
 
 | Value | Behavior |
 |-------|----------|
@@ -54,7 +54,7 @@ Controls which genes are perturbed. Symbols and Ensembl IDs are both accepted; [
 | `[ENSMUSG00000057530]` | Single gene by Ensembl ID |
 | `[Ece1, Igfbp2]` | Both genes perturbed **together** as one group |
 
-Example in [`config/isp.yaml`](../config/isp.yaml):
+Example in [`core/config/isp.yaml`](../core/config/isp.yaml):
 
 ```yaml
 perturbation:
@@ -75,7 +75,7 @@ At startup, the log prints symbol → Ensembl conversions, e.g. `Resolved gene s
 docker compose run --rm isp
 ```
 
-Runs `accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp.yaml`.
+Runs `accelerate launch --num_processes 1 /app/core/run_isp.py --config /app/core/config/isp.yaml`.
 
 **Multiple GPUs:**
 
@@ -88,7 +88,7 @@ Statistics and figures are consolidated on the **main** process only.
 **Alternate configs:**
 
 ```bash
-docker compose run --rm isp accelerate launch --num_processes 1 /app/run_isp.py --config /app/config/isp_Ctrl-Disease.yaml
+docker compose run --rm isp accelerate launch --num_processes 1 /app/core/run_isp.py --config /app/core/config/isp_Ctrl-Disease.yaml
 ```
 
 **Streamlit:** run type **ISP** or **Pipeline (E2E)** — see [README § Streamlit Web UI](../README.md#streamlit-web-ui).
@@ -143,7 +143,7 @@ On the **main process** only, `run_isp.py` prints a **config summary** (dataset 
 
 Tokenization logs (`tokenize_run.log`, etc.): [**tokenization.md § Run provenance**](tokenization.md#5-run-provenance-and-logs).
 
-Implementation: [`run_isp.py`](../run_isp.py), [`run_pipeline_log.py`](../run_pipeline_log.py).
+Implementation: [`run_isp.py`](../core/run_isp.py), [`run_pipeline_log.py`](../core/run_pipeline_log.py).
 
 ---
 

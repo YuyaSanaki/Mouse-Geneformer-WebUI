@@ -7,7 +7,7 @@ each stage sequentially.
 
 Usage:
   docker compose run --rm pipeline
-  python3 run_pipeline.py --config /app/config/my_pipeline.yaml
+  python3 core/run_pipeline.py --config /app/core/config/my_pipeline.yaml
 """
 from __future__ import annotations
 

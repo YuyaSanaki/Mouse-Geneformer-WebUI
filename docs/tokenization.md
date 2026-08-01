@@ -2,7 +2,7 @@
 
 Convert raw single-cell expression (10x, loom, or AnnData) into a Hugging Face **`.dataset`** directory for fine-tuning and ISP.
 
-Entrypoint: [`execute_tokenizer_pipeline.py`](../execute_tokenizer_pipeline.py). Configuration: [`config/tokenize.yaml`](../config/tokenize.yaml). Docker: `docker compose run --rm tokenize` in [`docker-compose.yml`](../docker-compose.yml).
+Entrypoint: [`execute_tokenizer_pipeline.py`](../core/execute_tokenizer_pipeline.py). Configuration: [`core/config/tokenize.yaml`](../core/config/tokenize.yaml). Docker: `docker compose run --rm tokenize` in [`docker-compose.yml`](../docker-compose.yml).
 
 Install prerequisites (Docker image, `MLM-re_token_dictionary_v1.pkl`): [README § Install](../README.md#install).
 
@@ -38,9 +38,9 @@ Example: `1w-Disease-SingleCell/`, `1w-Ctrl-SingleCell/` under one study root.
 | Replicate | Third segment (e.g. `Rep1`, `SingleCell`; use a placeholder if only one replicate) |
 | `sample_id` | Full folder name |
 
-With **`single_cell_settings.extract_metadata_from_path: true`** in `config/tokenize.yaml`, `time`, `genotype`, `replicate`, `disease`, and `sample_id` are filled from folder names. Adjust naming or the script if your labels differ.
+With **`single_cell_settings.extract_metadata_from_path: true`** in `core/config/tokenize.yaml`, `time`, `genotype`, `replicate`, `disease`, and `sample_id` are filled from folder names. Adjust naming or the script if your labels differ.
 
-**`data.input_dir`** is the **study root** (parent of sample folders), e.g. `/app/data/my_study/` or `/app/data/ExperimentName/`. See [`data_input_layout.py`](../data_input_layout.py) for discovery rules (flat samples, nested `ExperimentName/`, multiple experiments under `/data/`).
+**`data.input_dir`** is the **study root** (parent of sample folders), e.g. `/app/data/my_study/` or `/app/data/ExperimentName/`. See [`data_input_layout.py`](../contracts/data_input_layout.py) for discovery rules (flat samples, nested `ExperimentName/`, multiple experiments under `/data/`).
 
 ### Alternative formats
 
@@ -75,7 +75,7 @@ With **`single_cell_settings.extract_metadata_from_path: true`** in `config/toke
 
 ---
 
-## 2. Configure `config/tokenize.yaml`
+## 2. Configure `core/config/tokenize.yaml`
 
 | YAML area | What to set |
 |-----------|-------------|
@@ -107,7 +107,7 @@ docker compose run --rm tokenize
 Override config:
 
 ```bash
-TOKENIZE_CONFIG=/app/config/my_tokenize.yaml docker compose run --rm tokenize
+TOKENIZE_CONFIG=/app/core/config/my_tokenize.yaml docker compose run --rm tokenize
 ```
 
 **Streamlit:** run type **Tokenize**, or **Pipeline (E2E)** (tokenize is stage 1). See [README § Streamlit Web UI](../README.md#streamlit-web-ui).
@@ -125,13 +125,13 @@ Saved under `data.output_dir`, typically **`{output_prefix}_0.dataset`** (suffix
 | State column | e.g. `disease` — must match ISP `perturbation.state_key` and state strings |
 | Other metadata | e.g. `cell_type`, `time`, `sample_id` if mapped in `custom_attr_name_dict` |
 
-Point **`paths.dataset`** in [`config/finetune.yaml`](../config/finetune.yaml) or [`config/isp.yaml`](../config/isp.yaml) at this directory.
+Point **`paths.dataset`** in [`core/config/finetune.yaml`](../core/config/finetune.yaml) or [`core/config/isp.yaml`](../core/config/isp.yaml) at this directory.
 
 ---
 
 ## 5. Run provenance and logs
 
-[`execute_tokenizer_pipeline.py`](../execute_tokenizer_pipeline.py) prints a **config summary**, then runs conversion (if `input_type: single-cell`) and tokenization.
+[`execute_tokenizer_pipeline.py`](../core/execute_tokenizer_pipeline.py) prints a **config summary**, then runs conversion (if `input_type: single-cell`) and tokenization.
 
 | Artifact | Location | Role |
 |----------|----------|------|
@@ -149,10 +149,10 @@ Point **`paths.dataset`** in [`config/finetune.yaml`](../config/finetune.yaml) o
 
 The tee is attached after the output directory exists, so **loom conversion and tokenization** are both recorded. Shared behavior (what is captured, rotation, append vs. new folder): [in-silico pertabation.md § Run provenance and logs](in-silico%20pertabation.md#run-provenance-config-summary-and-rotating-logs).
 
-Implementation: [`execute_tokenizer_pipeline.py`](../execute_tokenizer_pipeline.py), [`run_pipeline_log.py`](../run_pipeline_log.py).
+Implementation: [`execute_tokenizer_pipeline.py`](../core/execute_tokenizer_pipeline.py), [`run_pipeline_log.py`](../core/run_pipeline_log.py).
 
 ---
 
 ## 6. Flow summary
 
-**Raw counts + metadata → `config/tokenize.yaml` → `docker compose run --rm tokenize` → `{output_prefix}_0.dataset` → fine-tune or ISP.**
+**Raw counts + metadata → `core/config/tokenize.yaml` → `docker compose run --rm tokenize` → `{output_prefix}_0.dataset` → fine-tune or ISP.**
