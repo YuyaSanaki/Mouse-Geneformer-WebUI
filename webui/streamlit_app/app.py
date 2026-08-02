@@ -714,6 +714,59 @@ def _poll_active_job() -> None:
         _sync_pipeline_output_run_dir()
 
 
+_UPLOAD_RUN_GUARD_JS = """
+<!-- reload nonce: %(nonce)s -->
+<script>
+(function () {
+  const doc = window.parent.document;
+  const BUTTON = ".st-key-run_job_btn button";
+  const INPUT = '[data-testid="stFileUploaderDropzoneInput"]';
+  const DROPZONE = '[data-testid="stFileUploaderDropzone"]';
+
+  // The browser uploads the zip without rerunning the Streamlit script, so the
+  // server cannot re-render the button as disabled during that window; grey it
+  // out here instead. A rerun reloads this iframe and clears the styling.
+  function setUploading(on) {
+    const button = doc.querySelector(BUTTON);
+    if (!button) return false;
+    button.style.opacity = on ? "0.4" : "";
+    button.style.pointerEvents = on ? "none" : "";
+    button.style.cursor = on ? "not-allowed" : "";
+    button.title = on ? "Waiting for the upload to finish" : "";
+    return true;
+  }
+
+  let tries = 0;
+  const reset = setInterval(function () {
+    if (setUploading(false) || ++tries > 20) clearInterval(reset);
+  }, 100);
+
+  function watch(selector, event, handler) {
+    doc.querySelectorAll(selector).forEach(function (el) {
+      if (el.dataset.uploadRunGuard) return;
+      el.dataset.uploadRunGuard = "1";
+      el.addEventListener(event, handler);
+    });
+  }
+
+  function attach() {
+    watch(INPUT, "change", function (e) {
+      if (e.target.files && e.target.files.length) setUploading(true);
+    });
+    watch(DROPZONE, "drop", function () { setUploading(true); });
+  }
+
+  attach();
+  new MutationObserver(attach).observe(doc.body, {childList: true, subtree: true});
+})();
+</script>
+"""
+
+
+def _render_upload_run_guard() -> None:
+    st.iframe(_UPLOAD_RUN_GUARD_JS % {"nonce": time.time()}, height=1)
+
+
 WEBUI_REPO_URL = "https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI"
 
 
@@ -745,6 +798,9 @@ def main() -> None:
             "Must match the name you use for Run — e.g. if the zip imported as `test`, set Study name to `test`."
         )
         st.subheader("Upload data.zip")
+        # Run stays disabled until the selected zip has been imported into a study.
+        import_pending = False
+        imported_now = False
         st.caption(
             "Zip with compressed `/data/` sample subfolders named `Time-State-Suffix/` "
             "(e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`). Each sample needs "
@@ -753,17 +809,26 @@ def main() -> None:
         zip_upload = st.file_uploader(
             "data.zip file",
             type=["zip"],
+            key="zip_upload",
             label_visibility="collapsed",
         )
         if zip_upload is not None:
             zip_fp = _zip_upload_fingerprint(zip_upload)
             if st.session_state.get("processed_zip_fingerprint") != zip_fp:
                 try:
-                    _process_study_zip_upload(zip_upload, upload_dir)
+                    with st.spinner("Importing study from zip..."):
+                        _process_study_zip_upload(zip_upload, upload_dir)
+                    imported_now = True
                 except (zipfile.BadZipFile, ValueError) as e:
                     st.error(str(e))
                 except Exception as e:
                     st.error(f"Upload failed: {e}")
+            import_pending = st.session_state.get("processed_zip_fingerprint") != zip_fp
+            if import_pending:
+                st.warning(
+                    "This zip is not imported, so **Run job** is disabled. "
+                    "Upload a valid zip, or remove this file to run on an earlier study."
+                )
         else:
             study_name = normalize_study_name(_raw_study_name())
             if study_name and study_folder(upload_dir, study_name).is_dir():
@@ -891,10 +956,23 @@ def main() -> None:
     run_clicked = False
     with execute_slot.container():
         st.subheader("Execute")
-        run_clicked = st.button("Run job", type="primary", disabled=busy)
+        run_clicked = st.button(
+            "Run job", type="primary", key="run_job_btn", disabled=busy or import_pending
+        )
+        if import_pending:
+            st.caption("Disabled until the uploaded zip finishes importing.")
+    _render_upload_run_guard()
 
     with run_output_slot.container():
         _render_run_directory_output(run_label)
+
+    if run_clicked and (import_pending or imported_now):
+        # Click queued while the zip was still uploading or importing.
+        st.warning(
+            "The study was still importing when **Run job** was clicked. "
+            "Check the detected states below, then click **Run job** again."
+        )
+        run_clicked = False
 
     if run_clicked:
         run_label = st.session_state["run_type_sel"]

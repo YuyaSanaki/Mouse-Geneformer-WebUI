@@ -97,6 +97,54 @@ def _write_cache(path: Path | None, key: str, batch_size: int, fields: Mapping[s
         logger.warning("Could not write batch-size cache %s: %s", path, e)
 
 
+def _measure(
+    probe: Callable[[int], None], candidate: int, repeats: int
+) -> tuple[float, int] | None:
+    """Return (samples per second, peak bytes) for one batch, or None on CUDA OOM."""
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    try:
+        probe(candidate)  # warm up kernels / allocator before timing
+        torch.cuda.synchronize()
+        started = time.perf_counter()
+        for _ in range(repeats):
+            probe(candidate)
+        torch.cuda.synchronize()
+        elapsed = time.perf_counter() - started
+    except Exception as e:  # noqa: BLE001 - OOM is the expected stop condition
+        if not _is_oom(e):
+            raise
+        torch.cuda.empty_cache()
+        return None
+    return (candidate * repeats) / max(elapsed, 1e-9), torch.cuda.max_memory_allocated()
+
+
+def _largest_batch_that_fits(
+    probe: Callable[[int], None],
+    *,
+    below: int,
+    budget: int,
+    repeats: int,
+) -> int:
+    """Halve below the smallest candidate until a batch fits; the caller needs one."""
+    candidate = below // 2
+    while candidate >= 1:
+        measured = _measure(probe, candidate, repeats)
+        if measured is not None and measured[1] <= budget:
+            print(
+                f"  batch {candidate}: fits ({measured[1] / 2**30:.1f} GiB), using it.",
+                flush=True,
+            )
+            return candidate
+        print(f"  batch {candidate}: still does not fit.", flush=True)
+        candidate //= 2
+    raise RuntimeError(
+        "Batch-size calibration failed: even batch size 1 does not fit in the "
+        f"{budget / 2**30:.1f} GiB budget. Free GPU memory (other jobs may be running), "
+        "or lower the sequence length / model size."
+    )
+
+
 def calibrate_batch_size(
     probe: Callable[[int], None],
     *,
@@ -112,7 +160,7 @@ def calibrate_batch_size(
     free, total = torch.cuda.mem_get_info()
     # Budget off free memory, not device total: other jobs may share this GPU.
     budget = baseline + int(memory_fraction * free)
-    chosen = int(candidates[0])
+    chosen: int | None = None
     best_rate = 0.0
 
     print(
@@ -127,32 +175,19 @@ def calibrate_batch_size(
             flush=True,
         )
     for candidate in candidates:
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        try:
-            probe(candidate)  # warm up kernels / allocator before timing
-            torch.cuda.synchronize()
-            started = time.perf_counter()
-            for _ in range(repeats):
-                probe(candidate)
-            torch.cuda.synchronize()
-            elapsed = time.perf_counter() - started
-        except Exception as e:  # noqa: BLE001 - OOM is the expected stop condition
-            if not _is_oom(e):
-                raise
+        measured = _measure(probe, candidate, repeats)
+        if measured is None:
             print(f"  batch {candidate}: out of memory, stopping.", flush=True)
-            torch.cuda.empty_cache()
             break
 
-        peak = torch.cuda.max_memory_allocated()
-        rate = (candidate * repeats) / max(elapsed, 1e-9)
+        rate, peak = measured
         print(
             f"  batch {candidate}: {rate:,.0f} samples/s, peak {peak / 2**30:.1f} GiB",
             flush=True,
         )
 
         if peak > budget:
-            print(f"  batch {candidate}: over memory budget, keeping {chosen}.", flush=True)
+            print(f"  batch {candidate}: over memory budget, stopping.", flush=True)
             break
         if best_rate and (rate - best_rate) / best_rate < min_gain:
             print(f"  batch {candidate}: no meaningful speedup, keeping {chosen}.", flush=True)
@@ -162,6 +197,12 @@ def calibrate_batch_size(
         if peak * 2 > budget:
             print(f"  doubling again would exceed the budget, keeping {chosen}.", flush=True)
             break
+
+    if chosen is None:
+        # The smallest candidate already failed; never return a batch known not to fit.
+        chosen = _largest_batch_that_fits(
+            probe, below=int(candidates[0]), budget=budget, repeats=repeats
+        )
 
     torch.cuda.empty_cache()
     print(f"Selected {label}: {chosen}", flush=True)

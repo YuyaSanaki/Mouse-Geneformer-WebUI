@@ -176,7 +176,7 @@ Implementation: [`run_isp.py`](../core/run_isp.py), [`run_pipeline_log.py`](../c
 
 `runtime.forward_batch_size: auto` (the default) lets ISP pick the batch size itself instead of you tuning it up to the OOM edge.
 
-At startup, after the model is on the GPU, ISP runs the real model over the longest sequence in the dataset with batches of 16, 32, 64, ... and records peak GPU memory and samples per second for each. It stops at the first batch that exceeds 80% of GPU memory, hits OOM, or improves throughput by less than 5%, and keeps the last good value. The two stop conditions matter equally: on unified-memory machines (e.g. GB10) throughput usually plateaus long before memory runs out, so sizing from free memory alone would pick a needlessly large batch.
+At startup, after the model is on the GPU, ISP runs the real model over the longest sequence in the dataset with batches of 16, 32, 64, ... and records peak GPU memory and samples per second for each. It stops at the first batch that exceeds 80% of GPU memory, hits OOM, or improves throughput by less than 5%, and keeps the last value that actually fit. If even the smallest probed batch fails, it halves down towards 1 and only then gives up, with an error naming the memory budget. The two stop conditions matter equally: on unified-memory machines (e.g. GB10) throughput usually plateaus long before memory runs out, so sizing from free memory alone would pick a needlessly large batch.
 
 Calibrate on an otherwise idle GPU. If another job is running, both the memory budget and the measured throughput shrink, so the probe picks a smaller batch and says so in its output.
 
