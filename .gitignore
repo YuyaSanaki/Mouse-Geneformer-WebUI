@@ -2,7 +2,10 @@
 /data/
 /models/
 /output/
+/figures/
+/notebooks/
 /mlruns/
+mlflow.db
 *.db
 
 # Local Docker / Compose overrides

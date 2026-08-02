@@ -31,14 +31,14 @@ def resolve_gene_identifier(raw: str) -> str:
     if not name_id:
         raise ValueError(
             f"Gene {s!r} looks like a symbol but symbol dictionary is unavailable at "
-            f"{GENE_NAME_ID_DICTIONARY_FILE}. Use an Ensembl ID (e.g. ENSMUSG00000057530)."
+            f"{GENE_NAME_ID_DICTIONARY_FILE}. Use an Ensembl ID (e.g. ENSMUSG00000029580)."
         )
     if s in name_id:
         return name_id[s]
 
     raise ValueError(
         f"Gene symbol {s!r} not found in symbol dictionary. "
-        "Use an Ensembl ID (e.g. ENSMUSG00000057530) or a known mouse gene symbol (e.g. Ece1, Igfbp2)."
+        "Use an Ensembl ID (e.g. ENSMUSG00000029580) or a known mouse gene symbol (e.g. Actb, Gapdh)."
     )
 
 

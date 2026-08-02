@@ -33,14 +33,12 @@ x-geneformer-base: &geneformer-base
   working_dir: /app
 
 services:
-  # Build target / Jupyter Lab. Image name is distinct from upstream mouse-geneformer.
+  # Image build target (CLI / WebUI jobs use the same image).
+  #   docker compose build mouse-geneformer-webui
   mouse-geneformer-webui:
     <<: *geneformer-base
     build: .
-    container_name: mouse_geneformer_webui_lab
-    ports:
-      - "8888:8888"
-    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token='' --NotebookApp.password=''
+    profiles: ["build"]
 
   # Streamlit Web UI (same image, jobs = subprocess to core runners):
   #   docker compose up -d webui

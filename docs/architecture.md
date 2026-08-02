@@ -16,7 +16,6 @@ Physical split (API service, separate deployables) can wait until job execution 
 | [`webui/`](../webui/) | Streamlit app (`streamlit_app/`) and upload helpers (`streamlit_upload.py`) |
 | [`contracts/`](../contracts/) | Shared rules used by both sides without pulling in job logic — today: [`data_input_layout.py`](../contracts/data_input_layout.py) |
 | [`docs/`](../docs/) | Operator docs |
-| [`notebooks/`](../notebooks/) | Exploratory notebooks (not the supported CLI/UI path) |
 
 `PYTHONPATH` in Docker is `/app/core:/app/contracts:/app/webui` so `import geneformer`, `import data_input_layout`, and `import streamlit_upload` resolve.
 

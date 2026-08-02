@@ -26,7 +26,7 @@ perturbation:
   start_state: AD
   end_state: WT
   alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of cell-state labels.
-  genes_to_perturb: [Ece1] # Gene symbol (e.g. Ece1, Igfbp2) or Ensembl ID (e.g. ENSMUSG00000057530). Empty = all genes.
+  genes_to_perturb: [Actb] # Gene symbol (e.g. Actb, Gapdh) or Ensembl ID (e.g. ENSMUSG00000029580). Empty = all genes.
 
 model:
   type: CellClassifier #Pretrained # Pretrained | GeneClassifier | CellClassifier

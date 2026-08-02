@@ -21,8 +21,8 @@ umap:
   max_cells_per_state: 2000
 
 perturbation:
-  # Gene to perturb. Accepts Ensembl ID (e.g. ENSMUSG00000039323) or Gene Symbol (e.g. Igfbp2)
-  gene_to_perturb: Ece1
+  # Gene to perturb. Accepts Ensembl ID (e.g. ENSMUSG00000029580) or Gene Symbol (e.g. Actb)
+  gene_to_perturb: Actb
   # Perturbation type: delete | overexpress | inhibit | activate
   #   delete: remove gene from rank value encoding (only type implemented in ISP UMAP today)
   #   overexpress: move gene to front of rank value encoding
