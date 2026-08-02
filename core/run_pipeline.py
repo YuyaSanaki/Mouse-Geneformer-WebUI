@@ -33,12 +33,38 @@ from pipeline_lib import (
     study_name_from_input_dir,
     write_yaml,
 )
+from data_input_layout import unique_states_from_samples
 from run_pipeline_log import install_rotating_stdio_tee
 from run_provenance import update_service_provenance, write_service_provenance
+
+# state_key values that tokenize fills from the sample folder name (Time-State-Suffix)
+_PATH_DERIVED_STATE_KEYS = frozenset({"disease", "genotype", "state"})
 
 
 def _utc_pipeline_folder_name(now_utc: datetime) -> str:
     return f"pipeline_{now_utc.strftime('%H%M%S')}_{now_utc.microsecond:06d}Z"
+
+
+def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
+    """Fail before tokenize/fine-tune when ISP states cannot exist in the dataset."""
+    perturbation = pipeline.get("perturbation") or {}
+    state_key = str(perturbation.get("state_key") or "").strip()
+    if state_key not in _PATH_DERIVED_STATE_KEYS:
+        return
+
+    available = unique_states_from_samples(Path(study_root))
+    if not available:
+        return
+
+    wanted = [perturbation.get("start_state"), perturbation.get("end_state")]
+    wanted += list(perturbation.get("alt_states") or [])
+    missing = sorted({str(v) for v in wanted if v} - set(available))
+    if missing:
+        raise ValueError(
+            f"ISP perturbation states {', '.join(missing)} are not in the study data. "
+            f"Sample folders provide {state_key}: {', '.join(available)}. "
+            "Fix perturbation.start_state / end_state (Web UI: ISP state dropdowns)."
+        )
 
 
 def _run_subprocess(cmd: list[str], env: dict[str, str], label: str) -> None:
@@ -108,6 +134,7 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     resolved = resolve_pipeline_paths(pipeline, run_dir)
+    _validate_perturbation_states(pipeline, resolved["input_dir"])
     stage_dir = run_dir / "stage_configs"
     tokenize_cfg_path = stage_dir / "tokenize.yaml"
     finetune_cfg_path = stage_dir / "finetune.yaml"

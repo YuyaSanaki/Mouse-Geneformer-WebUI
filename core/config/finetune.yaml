@@ -60,6 +60,8 @@ model:
 # ── Training hyperparameters ────────────────────────────────────────
 training:
   learning_rate: 5e-5
+  # Number, or auto to size it from this GPU. Keep a fixed number when comparing
+  # runs: batch size changes optimization dynamics, unlike ISP inference.
   batch_size: 6
   eval_batch_size: 2
   lr_scheduler_type: linear   # linear | cosine | polynomial

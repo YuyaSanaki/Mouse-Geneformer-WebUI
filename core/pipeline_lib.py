@@ -21,6 +21,13 @@ DEFAULT_PRETRAINED = "/app/models/mouse-Geneformer/"
 DEFAULT_OUTPUT_ROOT = "/app/output"
 
 
+def _batch_size_value(value: Any) -> int | str:
+    """Keep "auto" (measured at runtime on the GPU); otherwise coerce to int."""
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return "auto"
+    return int(value)
+
+
 def pipeline_runtime(pipeline: Mapping[str, Any]) -> dict[str, Any]:
     """Shared runtime knobs from config/pipeline.yaml (applied to all stages)."""
     raw = pipeline.get("runtime")
@@ -144,6 +151,9 @@ def build_finetune_config(
     if "nproc" in rt:
         cfg.setdefault("runtime", {})
         cfg["runtime"]["nproc"] = int(rt["nproc"])
+    if "train_batch_size" in rt:
+        cfg.setdefault("training", {})
+        cfg["training"]["batch_size"] = _batch_size_value(rt["train_batch_size"])
     return cfg
 
 
@@ -186,7 +196,7 @@ def build_isp_config(
         if "nproc" in rt:
             cfg["runtime"]["nproc"] = int(rt["nproc"])
         if "forward_batch_size" in rt:
-            cfg["runtime"]["forward_batch_size"] = int(rt["forward_batch_size"])
+            cfg["runtime"]["forward_batch_size"] = _batch_size_value(rt["forward_batch_size"])
     return cfg
 
 

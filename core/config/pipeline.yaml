@@ -31,7 +31,10 @@ paths:
 runtime:
   nproc: 16
   max_cells: 300000              # tokenize: tokenizer.max_cells
-  forward_batch_size: 100        # ISP: runtime.forward_batch_size
+  # auto = measure this GPU at startup (~1 min) and pick the largest batch that
+  # still speeds things up; a number pins it instead.
+  forward_batch_size: auto       # ISP: runtime.forward_batch_size
+  # train_batch_size: 6          # fine-tune: training.batch_size (number or auto)
 
 # ISP perturbation (copied into stage ISP config; same as config/isp.yaml)
 perturbation:
@@ -42,6 +45,9 @@ perturbation:
   # "activate": move gene to higher quartile of rank value encoding
   organ_data: null
   state_key: disease
+  # start_state / end_state must be values that appear in the sample folder names
+  # (Time-State-Suffix, e.g. 3w-AD-1st -> AD). The Web UI overwrites these on zip
+  # import; run_pipeline.py rejects values the study data cannot provide.
   start_state: Disease
   end_state: WT
   alt_states: []

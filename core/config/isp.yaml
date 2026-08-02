@@ -59,5 +59,6 @@ provenance:
 
 runtime:
   # Standalone ISP defaults; E2E pipeline overrides via config/pipeline.yaml runtime.*
-  forward_batch_size: 100
+  # auto = measure this GPU at startup (~1 min) and pick the batch size; or set a number.
+  forward_batch_size: auto
   nproc: 16

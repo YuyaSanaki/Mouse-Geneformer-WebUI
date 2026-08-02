@@ -34,7 +34,7 @@ Align paths and labels with your tokenized dataset.
 | `perturbation.genes_to_perturb` | Target genes: mouse symbols (e.g. `Ece1`, `Igfbp2`) or Ensembl IDs; `[]` = all genes (slow) |
 | `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` |
 | `isp.max_ncells` | Cap on cells after filters |
-| `runtime.forward_batch_size` / `nproc` | GPU batch size and CPU workers |
+| `runtime.forward_batch_size` / `nproc` | GPU batch size (`auto` = measured on this GPU) and CPU workers |
 
 ### Choosing `model.type`
 
@@ -167,11 +167,27 @@ Implementation: [`run_isp.py`](../core/run_isp.py), [`run_pipeline_log.py`](../c
 ## 8. Memory and throughput
 
 - Let PyTorch manage GPU memory between batches; avoid `torch.cuda.empty_cache()` / aggressive `gc.collect()` in hot loops.
-- On CUDA OOM, ISP may retry once after cache clear; then lower `runtime.forward_batch_size` or `isp.max_ncells`.
+- On CUDA OOM, ISP may retry once after cache clear; then lower `runtime.forward_batch_size` or `isp.max_ncells`. With `forward_batch_size: auto` the size is measured instead (see [Automatic batch sizing](#9-automatic-batch-sizing)).
 - **`nproc`**: speeds dataset map/filter only, not transformer forwards.
 
 ---
 
-## 9. Flow summary
+## 9. Automatic batch sizing
+
+`runtime.forward_batch_size: auto` (the default) lets ISP pick the batch size itself instead of you tuning it up to the OOM edge.
+
+At startup, after the model is on the GPU, ISP runs the real model over the longest sequence in the dataset with batches of 16, 32, 64, ... and records peak GPU memory and samples per second for each. It stops at the first batch that exceeds 80% of GPU memory, hits OOM, or improves throughput by less than 5%, and keeps the last good value. The two stop conditions matter equally: on unified-memory machines (e.g. GB10) throughput usually plateaus long before memory runs out, so sizing from free memory alone would pick a needlessly large batch.
+
+Calibrate on an otherwise idle GPU. If another job is running, both the memory budget and the measured throughput shrink, so the probe picks a smaller batch and says so in its output.
+
+The probe takes about a minute. The result is cached under `~/.cache/mouse-geneformer-webui/batch_size.json`, keyed by GPU, model, sequence length and dtype, so later runs reuse it. Set `GENEFORMER_BATCH_SIZE_CACHE=off` to always re-probe, or point it at another path.
+
+The chosen value is printed during calibration and again when perturbation finishes. Pin a number in the YAML whenever you need byte-identical reruns.
+
+Fine-tuning supports the same `auto` for `training.batch_size`, but it is **not** the default: batch size changes optimization dynamics there, so runs with different batch sizes are not directly comparable.
+
+---
+
+## 10. Flow summary
 
 **Design → [tokenize](tokenization.md) → edit `isp.yaml` → `docker compose run --rm isp` → stats / figures → analysis.**

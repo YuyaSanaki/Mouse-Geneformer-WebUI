@@ -72,6 +72,7 @@ _hf_datasets_tqdm_cls.__init__ = _hf_datasets_tqdm_init  # type: ignore[method-a
 from tqdm.auto import tqdm
 from transformers import BertForMaskedLM, BertForTokenClassification, BertForSequenceClassification
 
+from .auto_batch_size import is_auto, resolve_batch_size
 from .tokenizer import TOKEN_DICTIONARY_FILE, USE_GPU
 from accelerate import Accelerator
 
@@ -177,6 +178,36 @@ def quant_layers(model):
 
 def get_model_input_size(model):
     return int(re.split(r"\(|,",str(model.bert.embeddings.position_embeddings))[1])
+
+def resolve_forward_batch_size(value, model, input_data, pad_token_id, model_directory):
+    """Turn forward_batch_size="auto" into a number measured on this GPU."""
+    if not is_auto(value):
+        return int(value)
+
+    max_len = min(int(max(input_data["length"])), get_model_input_size(model))
+    tokens = list(input_data[0]["input_ids"])[:max_len]
+    tokens += [pad_token_id] * (max_len - len(tokens))
+    base_ids = torch.tensor(tokens, dtype=torch.long)
+
+    def probe(batch_size):
+        input_ids = base_ids.unsqueeze(0).expand(batch_size, max_len).contiguous()
+        input_ids = _tensor_to_device(input_ids)
+        attention_mask = torch.ones_like(input_ids)
+        with torch.no_grad():
+            model(input_ids=input_ids, attention_mask=attention_mask)
+
+    return resolve_batch_size(
+        value,
+        default=100,
+        probe=probe,
+        cache_fields={
+            "task": "isp_forward",
+            "model": str(model_directory),
+            "seq_len": max_len,
+            "dtype": str(next(model.parameters()).dtype),
+        },
+        label="ISP forward_batch_size",
+    )
 
 def flatten_list(megalist):
     return [item for sublist in megalist for item in sublist]
@@ -909,7 +940,7 @@ class InSilicoPerturber:
         "max_ncells": {None, int},
         "cell_inds_to_perturb": {"all", dict},
         "emb_layer": {-1, 0},
-        "forward_batch_size": {int},
+        "forward_batch_size": {int, "auto"},
         "nproc": {int},
     }
     def __init__(
@@ -1275,6 +1306,13 @@ class InSilicoPerturber:
         filtered_input_data = load_and_filter(self.filter_data, self.nproc, input_data_file)
         model = load_model(self.model_type, self.num_classes, model_directory)
         layer_to_quant = quant_layers(model)+self.emb_layer
+        self.forward_batch_size = resolve_forward_batch_size(
+            self.forward_batch_size,
+            model,
+            filtered_input_data,
+            self.pad_token_id,
+            model_directory,
+        )
         
         if self.cell_states_to_model is None:
             state_embs_dict = None
@@ -1285,11 +1323,19 @@ class InSilicoPerturber:
             # confirm that all states are valid to prevent futile filtering
             state_name = self.cell_states_to_model["state_key"]
             state_values = filtered_input_data[state_name]
-            for value in get_possible_states(self.cell_states_to_model):
-                if value not in state_values:
-                    logger.error(
-                        f"{value} is not present in the dataset's {state_name} attribute.")
-                    raise
+            missing = [
+                value
+                for value in get_possible_states(self.cell_states_to_model)
+                if value not in state_values
+            ]
+            if missing:
+                available = sorted(set(state_values))
+                message = (
+                    f"{', '.join(missing)} not present in the dataset's {state_name} attribute. "
+                    f"Available values: {', '.join(available)}."
+                )
+                logger.error(message)
+                raise ValueError(message)
             # get dictionary of average cell state embeddings for comparison
             logger.info(
                 "ISP phase 1/2: computing reference embeddings for cell states "

@@ -169,7 +169,7 @@ training:
 | Key | Description |
 |-----|-------------|
 | `learning_rate` | Peak learning rate (5e-5 is a good starting point for BERT fine-tuning) |
-| `batch_size` | Per-device training batch size. Increase until GPU OOM |
+| `batch_size` | Per-device training batch size. Increase until GPU OOM, or set `auto` to measure it on this GPU (see [Automatic batch sizing](in-silico%20pertabation.md#9-automatic-batch-sizing)). Pin a number when comparing runs: batch size changes optimization dynamics |
 | `eval_batch_size` | Per-device eval batch size (can be larger than train batch) |
 | `lr_scheduler_type` | `linear` (standard), `cosine` (smooth decay), or `polynomial` |
 | `warmup_steps` | Steps of linear warmup before the scheduler kicks in |

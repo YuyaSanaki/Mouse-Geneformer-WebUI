@@ -84,7 +84,7 @@ paths:
 runtime:
   nproc: 16
   max_cells: 300000
-  forward_batch_size: 100
+  forward_batch_size: auto
 
 perturbation:
   type: delete  # delete | overexpress | inhibit | activate
@@ -123,7 +123,8 @@ Copied into each stage config under `stage_configs/` when the pipeline runs.
 |-------|------------|
 | `nproc` | **Tokenize** (`tokenizer.nproc`), **Fine-tune** (`runtime.nproc`), **ISP** (`runtime.nproc`) — CPU workers for HuggingFace `datasets` map/filter |
 | `max_cells` | **Tokenize** (`tokenizer.max_cells`) — cap on cells tokenized per run |
-| `forward_batch_size` | **ISP** (`runtime.forward_batch_size`) — GPU minibatch for transformer forwards |
+| `forward_batch_size` | **ISP** (`runtime.forward_batch_size`) — GPU minibatch for transformer forwards; `auto` measures this GPU (see [Automatic batch sizing](in-silico%20pertabation.md#9-automatic-batch-sizing)) |
+| `train_batch_size` | **Fine-tune** (`training.batch_size`) — optional; omit to keep the value in `core/config/finetune.yaml` |
 
 Standalone jobs (`docker compose run tokenize` / `finetune` / `isp`) still use [`core/config/tokenize.yaml`](../core/config/tokenize.yaml), [`core/config/finetune.yaml`](../core/config/finetune.yaml), and [`core/config/isp.yaml`](../core/config/isp.yaml) directly.
 

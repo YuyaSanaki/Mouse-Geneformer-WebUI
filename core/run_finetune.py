@@ -41,6 +41,7 @@ from transformers import (
 )
 
 sys.path.append(os.getcwd())
+from geneformer.auto_batch_size import coerce_batch_size, is_auto, resolve_batch_size
 from geneformer.collator_for_classification import DataCollatorForCellClassification
 from run_pipeline_log import install_rotating_stdio_tee
 from run_provenance import write_service_provenance, update_service_provenance
@@ -222,6 +223,57 @@ def truncate_and_pad(dataset, max_len: int, pad_id: int):
         return batch
 
     return dataset.map(_process, batched=True)
+
+
+def resolve_train_batch_size(
+    value: Any,
+    model,
+    *,
+    max_len: int,
+    pad_id: int,
+    fp16: bool,
+    model_dir: str,
+    num_labels: int,
+) -> int:
+    """Turn training batch_size="auto" into a number measured on this GPU.
+
+    Unlike inference, batch size changes optimization dynamics, so "auto" is
+    opt-in and the chosen value is printed and stored with the run.
+    """
+    if not is_auto(value):
+        return int(value)
+
+    device = next(model.parameters()).device
+    base_ids = torch.full((max_len,), pad_id, dtype=torch.long)
+
+    def probe(batch_size: int) -> None:
+        input_ids = base_ids.unsqueeze(0).expand(batch_size, max_len).contiguous().to(device)
+        attention_mask = torch.ones_like(input_ids)
+        labels = torch.zeros(batch_size, dtype=torch.long, device=device)
+        model.train()
+        with torch.autocast("cuda", dtype=torch.float16, enabled=bool(fp16)):
+            loss = model(
+                input_ids=input_ids, attention_mask=attention_mask, labels=labels
+            ).loss
+        loss.backward()
+        model.zero_grad(set_to_none=True)
+
+    return resolve_batch_size(
+        value,
+        default=6,
+        probe=probe,
+        cache_fields={
+            "task": "finetune_train",
+            "model": model_dir,
+            "seq_len": max_len,
+            "num_labels": num_labels,
+            "fp16": bool(fp16),
+        },
+        # Training also holds optimizer state, which the probe does not allocate.
+        candidates=(2, 4, 8, 16, 32, 64),
+        memory_fraction=0.7,
+        label="training batch_size",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -470,8 +522,8 @@ def main() -> None:
     ignore_mismatched = mdl_cfg.get("ignore_mismatched_sizes", True)
 
     lr = float(tr_cfg.get("learning_rate", 5e-5))
-    batch_size = int(tr_cfg.get("batch_size", 6))
-    eval_batch_size = int(tr_cfg.get("eval_batch_size", max(1, batch_size // 4)))
+    batch_size = coerce_batch_size(tr_cfg.get("batch_size", 6), default=6)
+    eval_batch_size_cfg = tr_cfg.get("eval_batch_size")
     lr_sched = tr_cfg.get("lr_scheduler_type", "linear")
     warmup = int(tr_cfg.get("warmup_steps", 500))
     epochs = int(tr_cfg.get("epochs", 10))
@@ -613,6 +665,23 @@ def main() -> None:
                 eval_proc.set_format(
                     "torch",
                     columns=["input_ids", "attention_mask", "label", "length"],
+                )
+
+                if is_auto(batch_size):
+                    batch_size = resolve_train_batch_size(
+                        batch_size,
+                        model,
+                        max_len=max_len,
+                        pad_id=pad_id,
+                        fp16=fp16,
+                        model_dir=str(model_dir),
+                        num_labels=len(label_dict),
+                    )
+                    set_seed(seed)  # calibration consumed RNG draws (dropout)
+                eval_batch_size = (
+                    int(eval_batch_size_cfg)
+                    if eval_batch_size_cfg
+                    else max(1, batch_size // 4)
                 )
 
                 # Output directory

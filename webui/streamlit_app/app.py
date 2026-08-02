@@ -332,6 +332,36 @@ def _read_pipeline_perturbation() -> dict:
     return _read_pipeline_yaml().get("perturbation") or {}
 
 
+BATCH_MODE_AUTO = "Auto"
+BATCH_MODE_MANUAL = "Manual"
+DEFAULT_MANUAL_BATCH_SIZE = 100
+
+
+def _sync_batch_size_controls() -> None:
+    """Initialize the batch-size widgets from YAML; anything unparsable means Auto."""
+    if "pipeline_batch_mode" in st.session_state:
+        return
+    raw = (_read_pipeline_yaml().get("runtime") or {}).get("forward_batch_size", "auto")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = None
+    st.session_state["pipeline_batch_mode"] = (
+        BATCH_MODE_AUTO if value is None else BATCH_MODE_MANUAL
+    )
+    st.session_state["pipeline_batch_size"] = value or DEFAULT_MANUAL_BATCH_SIZE
+
+
+def _selected_forward_batch_size() -> int | str:
+    if st.session_state.get("pipeline_batch_mode", BATCH_MODE_AUTO) == BATCH_MODE_MANUAL:
+        return int(st.session_state.get("pipeline_batch_size", DEFAULT_MANUAL_BATCH_SIZE))
+    return "auto"
+
+
+def _apply_batch_size_to_yaml() -> None:
+    _patch_pipeline_yaml(forward_batch_size=_selected_forward_batch_size())
+
+
 def _display_input_dir_line(upload_dir: Path) -> str:
     """Resolved data.input_dir for Run directory panel (YAML / session after Apply)."""
     cfg = _read_pipeline_yaml()
@@ -427,8 +457,12 @@ def _sync_isp_state_selectors(
         options = ["Disease", "Ctrl"]
 
     default_start, default_end = _default_isp_start_end(detected)
-    start_val = str(pert.get("start_state") or default_start)
-    end_val = str(pert.get("end_state") or default_end)
+    if force and detected:
+        # New upload: sample folders win over leftover template values (e.g. Disease/Ctrl).
+        start_val, end_val = default_start, default_end
+    else:
+        start_val = str(pert.get("start_state") or default_start)
+        end_val = str(pert.get("end_state") or default_end)
     if start_val not in options:
         options = sorted(set(options) | {start_val})
     if end_val not in options:
@@ -486,6 +520,7 @@ def _apply_study_settings_to_yaml(upload_dir: Path) -> bool:
     _patch_pipeline_yaml(
         input_dir=tokenize_dir,
         output_prefix=study_name,
+        forward_batch_size=_selected_forward_batch_size(),
     )
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
     return True
@@ -501,13 +536,14 @@ def _process_study_zip_upload(uploaded_file, upload_dir: Path) -> None:
     st.session_state["pipeline_detected_states"] = states
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
     isp_start, isp_end = _default_isp_start_end(states)
-    _sync_isp_state_selectors(states, force=True)
     _patch_pipeline_yaml(
         input_dir=tokenize_dir,
         output_prefix=study_name,
         isp_start_state=isp_start,
         isp_end_state=isp_end,
+        forward_batch_size=_selected_forward_batch_size(),
     )
+    _sync_isp_state_selectors(states, force=True)
     st.session_state["processed_zip_fingerprint"] = _zip_upload_fingerprint(uploaded_file)
     st.success(f"Study **{study_name}** imported. `data.input_dir` → `{tokenize_dir}`")
     st.markdown(summary)
@@ -551,6 +587,7 @@ def _build_patched_pipeline_yaml(
     output_prefix: str | None = "__unset__",
     isp_start_state: str | None = None,
     isp_end_state: str | None = None,
+    forward_batch_size: int | str | None = None,
 ) -> str:
     """Return patched pipeline YAML text without touching session_state widgets."""
     cfg = _read_pipeline_yaml()
@@ -566,6 +603,9 @@ def _build_patched_pipeline_yaml(
             cfg["perturbation"]["organ_data"] = isp_start_state
         if isp_end_state is not None:
             cfg["perturbation"]["end_state"] = isp_end_state
+    if forward_batch_size is not None:
+        cfg.setdefault("runtime", {})
+        cfg["runtime"]["forward_batch_size"] = forward_batch_size
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
@@ -575,6 +615,7 @@ def _patch_pipeline_yaml(
     output_prefix: str | None = "__unset__",
     isp_start_state: str | None = None,
     isp_end_state: str | None = None,
+    forward_batch_size: int | str | None = None,
 ) -> bool:
     """Patch pipeline YAML fields in the editor (must run before yaml_editor widget, or via button+rerun)."""
     dumped = _build_patched_pipeline_yaml(
@@ -582,6 +623,7 @@ def _patch_pipeline_yaml(
         output_prefix=output_prefix,
         isp_start_state=isp_start_state,
         isp_end_state=isp_end_state,
+        forward_batch_size=forward_batch_size,
     )
     st.session_state["yaml_editor"] = dumped
     if input_dir is not None:
@@ -630,11 +672,24 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
         )
 
     # Build YAML for the job without writing session_state["yaml_editor"] after the widget exists.
+    start_state = st.session_state.get("pipeline_isp_start_state")
+    end_state = st.session_state.get("pipeline_isp_end_state")
+    available = unique_states_from_samples(tokenize_dir)
+    unknown = sorted({str(s) for s in (start_state, end_state) if s} - set(available))
+    if available and unknown:
+        return None, (
+            f"ISP states `{', '.join(unknown)}` do not exist in study **{study_name}**.\n\n"
+            f"Sample folders provide: `{', '.join(available)}`. "
+            "Pick those in the **ISP start_state / end_state** dropdowns "
+            "(ISP would fail hours later, after fine-tuning)."
+        )
+
     yaml_text = _build_patched_pipeline_yaml(
         input_dir=tokenize_dir,
         output_prefix=study_name,
-        isp_start_state=st.session_state.get("pipeline_isp_start_state"),
-        isp_end_state=st.session_state.get("pipeline_isp_end_state"),
+        isp_start_state=start_state,
+        isp_end_state=end_state,
+        forward_batch_size=_selected_forward_batch_size(),
     )
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
     return yaml_text, None
@@ -768,6 +823,36 @@ def main() -> None:
                 f"ISP: start=`{pert.get('start_state', '')}` end=`{pert.get('end_state', '')}` "
                 "(updates when you change the dropdowns)"
             )
+
+            _sync_batch_size_controls()
+            c_mode, c_size = st.columns(2)
+            with c_mode:
+                st.radio(
+                    "GPU batch size",
+                    [BATCH_MODE_AUTO, BATCH_MODE_MANUAL],
+                    key="pipeline_batch_mode",
+                    horizontal=True,
+                    on_change=_apply_batch_size_to_yaml,
+                    help=(
+                        "Auto measures this GPU when ISP starts and picks the largest batch "
+                        "that still speeds things up (writes `runtime.forward_batch_size`)."
+                    ),
+                )
+            with c_size:
+                if st.session_state.get("pipeline_batch_mode") == BATCH_MODE_MANUAL:
+                    st.number_input(
+                        "forward_batch_size",
+                        min_value=1,
+                        max_value=4096,
+                        step=8,
+                        key="pipeline_batch_size",
+                        on_change=_apply_batch_size_to_yaml,
+                    )
+                else:
+                    st.caption(
+                        "Measured at ISP startup (~1 min), then cached per GPU and model. "
+                        "Calibrate on an idle GPU; a busy GPU yields a smaller batch."
+                    )
             if st.button("Apply setting to Config YAML", type="secondary"):
                 if _apply_study_settings_to_yaml(upload_dir):
                     st.session_state["pipeline_set_input_msg"] = (

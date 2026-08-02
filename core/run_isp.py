@@ -31,6 +31,7 @@ import torch
 import yaml
 from accelerate import Accelerator
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
+from geneformer.auto_batch_size import coerce_batch_size
 from geneformer.gene_ids import resolve_genes_to_perturb
 
 from run_pipeline_log import format_isp_run_banner, install_rotating_stdio_tee
@@ -171,9 +172,9 @@ def load_isp_config(path: Path) -> dict[str, Any]:
 def _write_run_provenance(
     run_root: Path,
     config_path: Path,
-    forward_batch_size: int,
+    forward_batch_size: int | str,
     nproc: int,
-    cli_forward_batch_size: int | None,
+    cli_forward_batch_size: int | str | None,
     cli_nproc: int | None,
     input_fingerprints: dict[str, Any] | None = None,
 ) -> None:
@@ -249,9 +250,9 @@ def main() -> None:
     )
     p.add_argument(
         "--forward-batch-size",
-        type=int,
         default=None,
-        help="Override config runtime.forward_batch_size.",
+        metavar="N|auto",
+        help="Override config runtime.forward_batch_size ('auto' measures this GPU).",
     )
     p.add_argument(
         "--nproc",
@@ -292,9 +293,10 @@ def main() -> None:
 
     forward_batch_size = args.forward_batch_size
     if forward_batch_size is None:
-        forward_batch_size = int(
-            _deep_get(cfg, "runtime", "forward_batch_size", default=os.environ.get("ISP_FORWARD_BATCH_SIZE", "128"))
+        forward_batch_size = _deep_get(
+            cfg, "runtime", "forward_batch_size", default=os.environ.get("ISP_FORWARD_BATCH_SIZE", "128")
         )
+    forward_batch_size = coerce_batch_size(forward_batch_size, default=128)
     nproc = args.nproc
     if nproc is None:
         nproc = int(_deep_get(cfg, "runtime", "nproc", default=os.environ.get("ISP_NPROC", "8")))
@@ -529,7 +531,7 @@ def main() -> None:
 
         # Only run analysis on the main process to avoid race conditions
         if accelerator.is_main_process:
-            print("Perturbation complete. Generating stats...")
+            print(f"Perturbation complete (forward_batch_size={isp.forward_batch_size}). Generating stats...")
             ispstats = InSilicoPerturberStats(
                 mode=stats_mode,
                 genes_perturbed="all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list,
