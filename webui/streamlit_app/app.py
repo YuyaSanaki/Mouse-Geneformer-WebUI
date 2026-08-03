@@ -856,6 +856,7 @@ def main() -> None:
         # Run stays disabled until the selected zip has been imported into a study.
         import_pending = False
         imported_now = False
+        isp_states_invalid = False
         st.caption(
             "Zip with compressed `/data/` sample subfolders named `Time-State-Suffix/` "
             "(e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`). Each sample needs "
@@ -946,9 +947,10 @@ def main() -> None:
             sel_start = st.session_state.get("pipeline_isp_start_state")
             sel_end = st.session_state.get("pipeline_isp_end_state")
             if sel_start and sel_end and str(sel_start) == str(sel_end):
+                isp_states_invalid = True
                 st.error(
                     f"start_state and end_state are both `{sel_start}`. "
-                    "Pick different values (e.g. AD → WT) or **Run job** will be rejected."
+                    "Pick different values (e.g. AD → WT). **Run job** is disabled."
                 )
 
             _sync_batch_size_controls()
@@ -1015,25 +1017,34 @@ def main() -> None:
 
     proc = st.session_state.get("active_proc")
     busy = proc is not None and proc.poll() is None
+    run_blocked = busy or import_pending or isp_states_invalid
     run_clicked = False
     with execute_slot.container():
         st.subheader("Execute")
         run_clicked = st.button(
-            "Run job", type="primary", key="run_job_btn", disabled=busy or import_pending
+            "Run job", type="primary", key="run_job_btn", disabled=run_blocked
         )
         if import_pending:
             st.caption("Disabled until the uploaded zip finishes importing.")
+        elif isp_states_invalid:
+            st.caption("Disabled while ISP start_state and end_state are the same.")
     _render_upload_run_guard()
 
     with run_output_slot.container():
         _render_run_directory_output(run_label)
 
-    if run_clicked and (import_pending or imported_now):
-        # Click queued while the zip was still uploading or importing.
-        st.warning(
-            "The study was still importing when **Run job** was clicked. "
-            "Check the detected states below, then click **Run job** again."
-        )
+    if run_clicked and (import_pending or imported_now or isp_states_invalid):
+        # Click queued while the zip was still uploading/importing, or states were invalid.
+        if isp_states_invalid:
+            st.warning(
+                "ISP start_state and end_state must differ. "
+                "Fix the dropdowns, then click **Run job** again."
+            )
+        else:
+            st.warning(
+                "The study was still importing when **Run job** was clicked. "
+                "Check the detected states below, then click **Run job** again."
+            )
         run_clicked = False
 
     if run_clicked:
