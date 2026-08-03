@@ -1222,20 +1222,30 @@ class InSilicoPerturber:
                     raise
                 
                 if self.cell_states_to_model["start_state"] == self.cell_states_to_model["goal_state"]:
-                    logger.error(
-                        "All states must be unique.")
-                    raise
+                    message = (
+                        "All states must be unique: start_state and goal_state are both "
+                        f"{self.cell_states_to_model['start_state']!r}."
+                    )
+                    logger.error(message)
+                    raise ValueError(message)
 
                 if self.cell_states_to_model["alt_states"] is not None:
                     if type(self.cell_states_to_model["alt_states"]) is not list:
-                        logger.error(
-                            "self.cell_states_to_model['alt_states'] must be a list (even if it is one element)."
+                        message = (
+                            "self.cell_states_to_model['alt_states'] must be a list "
+                            "(even if it is one element)."
                         )
-                        raise
-                    if len(self.cell_states_to_model["alt_states"])!= len(set(self.cell_states_to_model["alt_states"])):
-                        logger.error(
-                            "All states must be unique.")
-                        raise
+                        logger.error(message)
+                        raise ValueError(message)
+                    if len(self.cell_states_to_model["alt_states"]) != len(
+                        set(self.cell_states_to_model["alt_states"])
+                    ):
+                        message = (
+                            "All states must be unique: alt_states has duplicates "
+                            f"{self.cell_states_to_model['alt_states']!r}."
+                        )
+                        logger.error(message)
+                        raise ValueError(message)
 
             else:
                 logger.error(

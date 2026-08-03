@@ -46,17 +46,26 @@ def _utc_pipeline_folder_name(now_utc: datetime) -> str:
 
 
 def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
-    """Fail before tokenize/fine-tune when ISP states cannot exist in the dataset."""
+    """Fail before tokenize/fine-tune when ISP states cannot exist or are not unique."""
     perturbation = pipeline.get("perturbation") or {}
     state_key = str(perturbation.get("state_key") or "").strip()
     if state_key not in _PATH_DERIVED_STATE_KEYS:
         return
 
+    start = str(perturbation.get("start_state") or "").strip()
+    end = str(perturbation.get("end_state") or "").strip()
+    if start and end and start == end:
+        raise ValueError(
+            f"ISP start_state and end_state are both `{start}`. "
+            "Geneformer requires distinct states for goal-state-shift ISP "
+            "(Web UI: pick different ISP start_state / end_state, e.g. AD → WT)."
+        )
+
     available = unique_states_from_samples(Path(study_root))
     if not available:
         return
 
-    wanted = [perturbation.get("start_state"), perturbation.get("end_state")]
+    wanted = [start, end]
     wanted += list(perturbation.get("alt_states") or [])
     missing = sorted({str(v) for v in wanted if v} - set(available))
     if missing:

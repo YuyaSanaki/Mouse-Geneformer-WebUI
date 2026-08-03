@@ -126,11 +126,19 @@ def _session_upload_dir() -> Path:
 
 
 def _tail_log(path: Path, max_bytes: int = 64_000) -> str:
+    """Read only the last max_bytes of a log (do not load multi-MB files whole)."""
     if not path.is_file():
         return "(Waiting for log file…)"
-    data = path.read_bytes()
-    if len(data) > max_bytes:
-        data = b"... (showing tail)\n" + data[-max_bytes:]
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "(Waiting for log file…)"
+    with path.open("rb") as f:
+        if size > max_bytes:
+            f.seek(-max_bytes, os.SEEK_END)
+            data = b"... (showing tail)\n" + f.read()
+        else:
+            data = f.read()
     return data.decode("utf-8", errors="replace")
 
 
@@ -170,17 +178,32 @@ def _guess_output_roots(run_label: str, cfg: dict) -> list[Path]:
     return roots
 
 
+def _pipeline_zip_skip(rel: Path) -> bool:
+    """Skip multi-GB artifacts that would OOM the browser download button."""
+    parts = rel.parts
+    if not parts:
+        return False
+    if parts[0] in ("tokenized_dataset", "loom_files"):
+        return True
+    if any(p.startswith("checkpoint-") for p in parts):
+        return True
+    return False
+
+
 def _build_pipeline_run_zip(run_dir: Path) -> tuple[bytes, str] | None:
-    """Zip one pipeline_* run folder (checkpoints, figures, logs, configs, etc.)."""
+    """Zip one pipeline_* run for download (skips tokenized data and training checkpoints)."""
     run_dir = run_dir.resolve()
     if not run_dir.is_dir() or not run_dir.name.startswith("pipeline_"):
         return None
 
     entries: list[tuple[Path, str]] = []
     for fp in sorted(run_dir.rglob("*")):
-        if fp.is_file():
-            rel = fp.relative_to(run_dir)
-            entries.append((fp, f"{run_dir.name}/{rel.as_posix()}"))
+        if not fp.is_file():
+            continue
+        rel = fp.relative_to(run_dir)
+        if _pipeline_zip_skip(rel):
+            continue
+        entries.append((fp, f"{run_dir.name}/{rel.as_posix()}"))
 
     if not entries:
         return None
@@ -438,9 +461,12 @@ def _default_isp_start_end(states: list[str]) -> tuple[str, str]:
     if not states:
         return "Disease", "Ctrl"
     if len(states) == 1:
+        # Same start/end is invalid for goal-state-shift ISP; caller should warn.
         return states[0], states[0]
-    if "Disease" in states and "Ctrl" in states:
-        return "Disease", "Ctrl"
+    # Prefer common disease / control pairings when present.
+    for start, end in (("AD", "WT"), ("Disease", "Ctrl"), ("disease", "control")):
+        if start in states and end in states:
+            return start, end
     return states[0], states[1]
 
 
@@ -674,6 +700,14 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
     # Build YAML for the job without writing session_state["yaml_editor"] after the widget exists.
     start_state = st.session_state.get("pipeline_isp_start_state")
     end_state = st.session_state.get("pipeline_isp_end_state")
+    if start_state and end_state and str(start_state) == str(end_state):
+        return None, (
+            f"ISP **start_state** and **end_state** are both `{start_state}`.\n\n"
+            "Goal-state-shift ISP needs two different conditions "
+            "(e.g. start=`AD`, end=`WT`). Change the dropdowns and run again — "
+            "otherwise fine-tuning would finish and ISP would fail immediately."
+        )
+
     available = unique_states_from_samples(tokenize_dir)
     unknown = sorted({str(s) for s in (start_state, end_state) if s} - set(available))
     if available and unknown:
@@ -715,17 +749,19 @@ def _poll_active_job() -> None:
 
 
 _UPLOAD_RUN_GUARD_JS = """
-<!-- reload nonce: %(nonce)s -->
 <script>
 (function () {
+  // One observer for the lifetime of the page. Re-injecting on every Streamlit
+  // rerun (e.g. 1 Hz while a job runs) would leak MutationObservers until Chrome
+  // kills the tab for memory.
+  if (window.parent.__mgUploadRunGuard) return;
+  window.parent.__mgUploadRunGuard = true;
+
   const doc = window.parent.document;
   const BUTTON = ".st-key-run_job_btn button";
   const INPUT = '[data-testid="stFileUploaderDropzoneInput"]';
   const DROPZONE = '[data-testid="stFileUploaderDropzone"]';
 
-  // The browser uploads the zip without rerunning the Streamlit script, so the
-  // server cannot re-render the button as disabled during that window; grey it
-  // out here instead. A rerun reloads this iframe and clears the styling.
   function setUploading(on) {
     const button = doc.querySelector(BUTTON);
     if (!button) return false;
@@ -735,11 +771,6 @@ _UPLOAD_RUN_GUARD_JS = """
     button.title = on ? "Waiting for the upload to finish" : "";
     return true;
   }
-
-  let tries = 0;
-  const reset = setInterval(function () {
-    if (setUploading(false) || ++tries > 20) clearInterval(reset);
-  }, 100);
 
   function watch(selector, event, handler) {
     doc.querySelectorAll(selector).forEach(function (el) {
@@ -764,7 +795,31 @@ _UPLOAD_RUN_GUARD_JS = """
 
 
 def _render_upload_run_guard() -> None:
-    st.iframe(_UPLOAD_RUN_GUARD_JS % {"nonce": time.time()}, height=1)
+    # Stable markup so Streamlit does not recreate the iframe every second.
+    st.iframe(_UPLOAD_RUN_GUARD_JS, height=1)
+
+
+_LOG_POLL_SECONDS = 5.0
+
+
+def _render_live_log(busy: bool) -> None:
+    st.subheader("Logs & status")
+    log_path = st.session_state.get("active_log_path")
+    if busy:
+        st.warning(f"Job running… (log refreshes every {int(_LOG_POLL_SECONDS)}s)")
+        if isinstance(log_path, Path):
+            st.code(_tail_log(log_path), language="text")
+        time.sleep(_LOG_POLL_SECONDS)
+        st.rerun()
+        return
+    if isinstance(log_path, Path) and log_path.is_file():
+        st.code(_tail_log(log_path), language="text")
+    if st.session_state.get("last_exit_code") is not None:
+        code = st.session_state["last_exit_code"]
+        if code == 0:
+            st.success(f"Last job finished OK (exit {code}).")
+        else:
+            st.error(f"Last job failed (exit {code}).")
 
 
 WEBUI_REPO_URL = "https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI"
@@ -888,6 +943,13 @@ def main() -> None:
                 f"ISP: start=`{pert.get('start_state', '')}` end=`{pert.get('end_state', '')}` "
                 "(updates when you change the dropdowns)"
             )
+            sel_start = st.session_state.get("pipeline_isp_start_state")
+            sel_end = st.session_state.get("pipeline_isp_end_state")
+            if sel_start and sel_end and str(sel_start) == str(sel_end):
+                st.error(
+                    f"start_state and end_state are both `{sel_start}`. "
+                    "Pick different values (e.g. AD → WT) or **Run job** will be rejected."
+                )
 
             _sync_batch_size_controls()
             c_mode, c_size = st.columns(2)
@@ -1035,24 +1097,7 @@ def main() -> None:
                 st.success(f"Started. Run folder: `{run_dir}`")
                 st.rerun()
 
-    st.subheader("Logs & status")
-    if busy:
-        st.warning("Job running…")
-        log_path = st.session_state.get("active_log_path")
-        if isinstance(log_path, Path):
-            st.code(_tail_log(log_path), language="text")
-        time.sleep(1.0)
-        st.rerun()
-    else:
-        log_path = st.session_state.get("active_log_path")
-        if isinstance(log_path, Path) and log_path.is_file():
-            st.code(_tail_log(log_path), language="text")
-        if st.session_state.get("last_exit_code") is not None:
-            code = st.session_state["last_exit_code"]
-            if code == 0:
-                st.success(f"Last job finished OK (exit {code}).")
-            else:
-                st.error(f"Last job failed (exit {code}).")
+    _render_live_log(busy)
 
     st.subheader("Outputs")
     run_label = st.session_state.get("run_type_sel", "")
@@ -1063,22 +1108,44 @@ def main() -> None:
             st.markdown(f"**Pipeline run folder:** `{run_path}`")
             for item in _pipeline_run_summary(run_path):
                 st.caption(f"  · {item}")
-            zip_payload = _build_pipeline_run_zip(run_path)
-            if zip_payload:
-                zip_bytes, zip_name = zip_payload
+            st.caption(
+                "Download excludes `tokenized_dataset/` and training `checkpoint-*` "
+                "(multi-GB). Copy those from the run folder on the server if needed."
+            )
+            prepared = st.session_state.get("pipeline_zip_for") == str(run_path)
+            if not prepared:
+                if st.button("Prepare download zip (results + figures)", type="secondary"):
+                    with st.spinner("Building zip…"):
+                        zip_payload = _build_pipeline_run_zip(run_path)
+                    if zip_payload:
+                        st.session_state["pipeline_zip_bytes"] = zip_payload[0]
+                        st.session_state["pipeline_zip_name"] = zip_payload[1]
+                        st.session_state["pipeline_zip_for"] = str(run_path)
+                    else:
+                        st.session_state.pop("pipeline_zip_bytes", None)
+                        st.session_state.pop("pipeline_zip_name", None)
+                        st.session_state.pop("pipeline_zip_for", None)
+                        st.warning("No downloadable files found in this run folder.")
+                    st.rerun()
+            else:
                 st.download_button(
-                    label=f"Download pipeline run (.zip) — {zip_name}",
-                    data=zip_bytes,
-                    file_name=zip_name,
+                    label=f"Download pipeline run (.zip) — {st.session_state['pipeline_zip_name']}",
+                    data=st.session_state["pipeline_zip_bytes"],
+                    file_name=st.session_state["pipeline_zip_name"],
                     mime="application/zip",
                     key="dl_pipeline_run_zip",
                     help=(
-                        "Full contents of this pipeline run only: finetune checkpoints, "
-                        "ISP outputs, figures, tokenized dataset, logs, and stage configs."
+                        "Figures, ISP stats/results, logs, configs, and the fine-tuned "
+                        "model weights (no tokenized dataset / intermediate checkpoints)."
                     ),
                 )
-            elif st.session_state.get("last_exit_code") == 0:
-                st.caption("Pipeline run folder exists but contains no files to download yet.")
+                if st.button("Clear prepared zip from memory", type="secondary"):
+                    st.session_state.pop("pipeline_zip_bytes", None)
+                    st.session_state.pop("pipeline_zip_name", None)
+                    st.session_state.pop("pipeline_zip_for", None)
+                    st.rerun()
+            if st.session_state.get("last_exit_code") == 0 and not prepared:
+                st.caption("Click **Prepare download zip** when you want a browser download.")
         else:
             st.caption(
                 "After **Run job**, the pipeline run folder appears here. "
