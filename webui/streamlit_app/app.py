@@ -749,14 +749,9 @@ def _poll_active_job() -> None:
 
 
 _UPLOAD_RUN_GUARD_JS = """
+<!-- refresh %(nonce)s -->
 <script>
 (function () {
-  // One observer for the lifetime of the page. Re-injecting on every Streamlit
-  // rerun (e.g. 1 Hz while a job runs) would leak MutationObservers until Chrome
-  // kills the tab for memory.
-  if (window.parent.__mgUploadRunGuard) return;
-  window.parent.__mgUploadRunGuard = true;
-
   const doc = window.parent.document;
   const BUTTON = ".st-key-run_job_btn button";
   const INPUT = '[data-testid="stFileUploaderDropzoneInput"]';
@@ -765,12 +760,19 @@ _UPLOAD_RUN_GUARD_JS = """
   function setUploading(on) {
     const button = doc.querySelector(BUTTON);
     if (!button) return false;
+    // Never override Streamlit's own disabled styling; only the transient
+    // "browser is still sending the zip" grey-out uses these inline styles.
+    if (button.disabled && on) return true;
     button.style.opacity = on ? "0.4" : "";
     button.style.pointerEvents = on ? "none" : "";
     button.style.cursor = on ? "not-allowed" : "";
     button.title = on ? "Waiting for the upload to finish" : "";
     return true;
   }
+
+  // Every Streamlit rerun reloads this iframe. Always clear the transient grey-out
+  // so a finished import / fixed ISP states do not leave the button stuck.
+  setUploading(false);
 
   function watch(selector, event, handler) {
     doc.querySelectorAll(selector).forEach(function (el) {
@@ -787,16 +789,23 @@ _UPLOAD_RUN_GUARD_JS = """
     watch(DROPZONE, "drop", function () { setUploading(true); });
   }
 
-  attach();
-  new MutationObserver(attach).observe(doc.body, {childList: true, subtree: true});
+  // Listeners / observer: install once on the parent document.
+  if (!window.parent.__mgUploadRunGuard) {
+    window.parent.__mgUploadRunGuard = true;
+    attach();
+    new MutationObserver(attach).observe(doc.body, {childList: true, subtree: true});
+  } else {
+    attach();
+  }
 })();
 </script>
 """
 
 
 def _render_upload_run_guard() -> None:
-    # Stable markup so Streamlit does not recreate the iframe every second.
-    st.iframe(_UPLOAD_RUN_GUARD_JS, height=1)
+    # Nonce forces the iframe to re-run clear() after each Streamlit rerun without
+    # re-installing the parent MutationObserver (guarded in JS).
+    st.iframe(_UPLOAD_RUN_GUARD_JS % {"nonce": time.time_ns()}, height=1)
 
 
 _LOG_POLL_SECONDS = 5.0
@@ -940,17 +949,17 @@ def main() -> None:
                     help="Goal state for in-silico shift (writes `perturbation.end_state` to YAML).",
                 )
             pert = _read_pipeline_perturbation()
-            st.caption(
-                f"ISP: start=`{pert.get('start_state', '')}` end=`{pert.get('end_state', '')}` "
-                "(updates when you change the dropdowns)"
-            )
             sel_start = st.session_state.get("pipeline_isp_start_state")
             sel_end = st.session_state.get("pipeline_isp_end_state")
+            st.caption(
+                f"ISP: start=`{sel_start}` end=`{sel_end}` "
+                f"(YAML end=`{pert.get('end_state', '')}` — updates when you change the dropdowns)"
+            )
             if sel_start and sel_end and str(sel_start) == str(sel_end):
                 isp_states_invalid = True
                 st.error(
                     f"start_state and end_state are both `{sel_start}`. "
-                    "Pick different values (e.g. AD → WT). **Run job** is disabled."
+                    "Pick different values (e.g. WT → AD). **Run job** is disabled."
                 )
 
             _sync_batch_size_controls()
@@ -1024,8 +1033,13 @@ def main() -> None:
         run_clicked = st.button(
             "Run job", type="primary", key="run_job_btn", disabled=run_blocked
         )
-        if import_pending:
-            st.caption("Disabled until the uploaded zip finishes importing.")
+        if busy:
+            st.caption("Disabled while a job is running.")
+        elif import_pending:
+            st.caption(
+                "Disabled until the uploaded zip finishes importing. "
+                "If this persists, clear the file from **Upload data.zip** and try again."
+            )
         elif isp_states_invalid:
             st.caption("Disabled while ISP start_state and end_state are the same.")
     _render_upload_run_guard()
