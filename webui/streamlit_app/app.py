@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -808,27 +808,56 @@ def _render_upload_run_guard() -> None:
     st.iframe(_UPLOAD_RUN_GUARD_JS % {"nonce": time.time_ns()}, height=1)
 
 
-_LOG_POLL_SECONDS = 5.0
+_LOG_AUTO_REFRESH = timedelta(minutes=10)
 
 
-def _render_live_log(busy: bool) -> None:
-    st.subheader("Logs & status")
+def _render_log_body() -> None:
+    """Show log tail + optional last-exit status (shared by busy / idle paths)."""
     log_path = st.session_state.get("active_log_path")
-    if busy:
-        st.warning(f"Job running… (log refreshes every {int(_LOG_POLL_SECONDS)}s)")
-        if isinstance(log_path, Path):
-            st.code(_tail_log(log_path), language="text")
-        time.sleep(_LOG_POLL_SECONDS)
-        st.rerun()
-        return
-    if isinstance(log_path, Path) and log_path.is_file():
+    if isinstance(log_path, Path):
         st.code(_tail_log(log_path), language="text")
     if st.session_state.get("last_exit_code") is not None:
         code = st.session_state["last_exit_code"]
         if code == 0:
             st.success(f"Last job finished OK (exit {code}).")
+        elif isinstance(code, int) and code < 0:
+            # Negative codes are -signal (e.g. -15 SIGTERM, -9 SIGKILL).
+            sig = -code
+            st.warning(
+                f"Last job was stopped by signal {sig} (exit {code}), "
+                "not a pipeline failure."
+            )
         else:
             st.error(f"Last job failed (exit {code}).")
+
+
+@st.fragment(run_every=_LOG_AUTO_REFRESH)
+def _render_live_log_while_busy() -> None:
+    """Auto-refresh every 10 min without blocking the rest of the page; manual refresh via button."""
+    proc = st.session_state.get("active_proc")
+    if proc is not None and proc.poll() is not None:
+        _poll_active_job()
+        st.rerun()
+
+    st.subheader("Logs & status")
+    st.warning(
+        "Job running… (auto-refreshes every 10 min — click **Refresh log** for the latest)"
+    )
+    # Click re-runs this fragment only (and re-checks job completion above).
+    st.button("Refresh log", key="refresh_log_btn")
+    _render_log_body()
+
+
+def _render_live_log(busy: bool) -> None:
+    if busy:
+        _render_live_log_while_busy()
+        return
+    st.subheader("Logs & status")
+    log_path = st.session_state.get("active_log_path")
+    if isinstance(log_path, Path) and log_path.is_file():
+        if st.button("Refresh log", key="refresh_log_idle_btn"):
+            st.rerun()
+    _render_log_body()
 
 
 WEBUI_REPO_URL = "https://github.com/YuyaSanaki/Mouse-Geneformer-WebUI"
