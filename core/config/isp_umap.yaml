@@ -10,7 +10,7 @@ paths:
   geneformer_model: /app/output/20260422/finetune_004752_215426Z/all_run1
 
 umap:
-  # Random seed for robust/reproducible UMAP plotting
+  # Random seed for UMAP and for random/stratified cell sampling
   seed: 42
   # UMAP parameters
   n_neighbors: 15
@@ -19,6 +19,13 @@ umap:
   num_trajectory_arrows: 100
   # Maximum cells to extract per state to prevent memory limits
   max_cells_per_state: 2000
+  # How to pick those cells within each state:
+  #   head        — first N rows (legacy / dataset-order dependent)
+  #   random      — shuffle then take N
+  #   stratified  — balance across sample_key groups (recommended)
+  sampling: stratified
+  # Column used for stratified sampling (falls back to random with a warning if missing)
+  sample_key: sample_id
 
 perturbation:
   # Gene to perturb. Accepts Ensembl ID (e.g. ENSMUSG00000029580) or Gene Symbol (e.g. Actb)

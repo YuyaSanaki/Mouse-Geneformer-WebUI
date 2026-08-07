@@ -14,12 +14,17 @@ Key configurations to note:
 |-----------|-------------|
 | `paths.dataset` | Tokenized `.dataset` directory containing your original and condition-annotated cells. |
 | `paths.geneformer_model` | Path to your pre-trained or fine-tuned sequence classification model. |
-| `umap.seed` | Seed for cuML/UMAP initialization (default `42`) to ensure reproducible projections. |
+| `umap.seed` | Seed for cuML/UMAP and for `random` / `stratified` cell sampling (default `42`). |
+| `umap.max_cells_per_state` | Cap on cells kept per state after filtering (default `2000`). |
+| `umap.sampling` | How to pick those cells: `head` (first N, legacy), `random`, or `stratified` (balance across `sample_key`; recommended). |
+| `umap.sample_key` | Column for stratified sampling (default `sample_id`); if missing, stratified falls back to random with a warning. |
 | `umap.num_trajectory_arrows` | The number of trajectories to draw. We limit this locally to prevent overplotting. |
 | `perturbation.gene_to_perturb` | Gene symbol (e.g. `TargetGene`) or Ensembl ID to perturb. |
 | `perturbation.state_key` | Label column that divides your cells (e.g., `disease`). |
 | `perturbation.start_state` | Condition you are perturbing (e.g. `Disease`). |
 | `perturbation.end_state` | Condition you are comparing against (e.g. `Ctrl`). |
+
+After filtering by `start_state` / `end_state`, the runner caps each state to `max_cells_per_state`. Prefer `sampling: stratified` with `sample_key: sample_id` so UMAP and `per_cell_isp_shift.csv` are not dominated by whichever sample appears first in the dataset (the old `head` behavior).
 
 ### Gene Symbol Auto-Detection
 

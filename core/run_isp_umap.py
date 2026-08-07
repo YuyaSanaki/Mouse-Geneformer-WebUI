@@ -1,5 +1,6 @@
 import os
 import argparse
+import math
 import yaml
 import torch
 import numpy as np
@@ -8,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
 import logging
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from datasets import load_from_disk
@@ -15,6 +17,118 @@ from transformers import AutoModelForSequenceClassification
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _stratified_indices(labels, max_cells, rng):
+    """Pick up to max_cells indices, as evenly as possible across label groups."""
+    groups = defaultdict(list)
+    for i, lab in enumerate(labels):
+        groups[lab].append(i)
+
+    keys = sorted(groups.keys(), key=lambda x: str(x))
+    n_groups = len(keys)
+    if n_groups == 0:
+        return []
+
+    sizes = {g: len(groups[g]) for g in keys}
+    ideal = math.ceil(max_cells / n_groups)
+    alloc = {g: min(sizes[g], ideal) for g in keys}
+
+    total = sum(alloc.values())
+    if total < max_cells:
+        deficit = max_cells - total
+        while deficit > 0:
+            expandable = [g for g in keys if alloc[g] < sizes[g]]
+            if not expandable:
+                break
+            for g in expandable:
+                if deficit == 0:
+                    break
+                alloc[g] += 1
+                deficit -= 1
+    elif total > max_cells:
+        excess = total - max_cells
+        while excess > 0:
+            shrinkable = sorted(
+                [g for g in keys if alloc[g] > 0],
+                key=lambda g: (-alloc[g], str(g)),
+            )
+            if not shrinkable:
+                break
+            for g in shrinkable:
+                if excess == 0:
+                    break
+                if alloc[g] > 0:
+                    alloc[g] -= 1
+                    excess -= 1
+
+    chosen = []
+    for g in keys:
+        idxs = list(groups[g])
+        rng.shuffle(idxs)
+        chosen.extend(idxs[: alloc[g]])
+    rng.shuffle(chosen)
+    return chosen
+
+
+def subsample_dataset(ds, max_cells, method="head", sample_key="sample_id", seed=42, state_label=""):
+    """Subsample a filtered state dataset to at most max_cells cells.
+
+    method:
+      head        — first N rows (legacy / backward compatible)
+      random      — shuffle then take N
+      stratified  — balance across sample_key groups (fallback to random if key missing)
+    """
+    n = len(ds)
+    label = state_label or "state"
+    method = (method or "head").lower().strip()
+    rng = np.random.default_rng(seed)
+
+    if n <= max_cells:
+        indices = list(range(n))
+        effective_method = method
+    elif method == "head":
+        indices = list(range(max_cells))
+        effective_method = "head"
+    elif method == "random":
+        indices = rng.choice(n, size=max_cells, replace=False).tolist()
+        effective_method = "random"
+    elif method == "stratified":
+        if sample_key not in ds.column_names:
+            logger.warning(
+                "sample_key '%s' not in dataset columns %s; falling back to random for %s",
+                sample_key,
+                ds.column_names,
+                label,
+            )
+            indices = rng.choice(n, size=max_cells, replace=False).tolist()
+            effective_method = "random"
+        else:
+            indices = _stratified_indices(ds[sample_key], max_cells, rng)
+            effective_method = "stratified"
+    else:
+        logger.warning("Unknown sampling method '%s'; using head for %s", method, label)
+        indices = list(range(min(n, max_cells)))
+        effective_method = "head"
+
+    out = ds.select(indices)
+    per_sample = None
+    if sample_key in out.column_names:
+        per_sample = dict(sorted(Counter(out[sample_key]).items(), key=lambda x: str(x[0])))
+
+    logger.info(
+        "Sampling [%s]: method=%s seed=%s total_cells=%d selected=%d max_cells=%d sample_key=%s",
+        label,
+        effective_method,
+        seed,
+        n,
+        len(out),
+        max_cells,
+        sample_key,
+    )
+    if per_sample is not None:
+        logger.info("Sampling [%s]: selected per %s: %s", label, sample_key, per_sample)
+    return out
 
 def compute_mean_embs(hidden_state, length, max_len):
     """Mean pool hidden states based on actual non-padded sequence lengths."""
@@ -178,13 +292,28 @@ def main():
     start_state = cfg["perturbation"]["start_state"]
     end_state = cfg["perturbation"]["end_state"]
     max_cells = cfg["umap"].get("max_cells_per_state", 2000)
+    sampling_method = cfg["umap"].get("sampling", "head")
+    sample_key = cfg["umap"].get("sample_key", "sample_id")
+    umap_seed = cfg["umap"].get("seed", 42)
 
-    logger.info(f"Filtering dataset for exactly {max_cells} '{start_state}' cells and '{end_state}' cells...")
+    logger.info(
+        "Filtering dataset for up to %d '%s' / '%s' cells (sampling=%s, sample_key=%s, seed=%s)...",
+        max_cells,
+        start_state,
+        end_state,
+        sampling_method,
+        sample_key,
+        umap_seed,
+    )
     start_dataset = dataset.filter(lambda x: x.get(state_key) == start_state)
     end_dataset = dataset.filter(lambda x: x.get(state_key) == end_state)
-    
-    start_dataset = start_dataset.select(range(min(len(start_dataset), max_cells)))
-    end_dataset = end_dataset.select(range(min(len(end_dataset), max_cells)))
+
+    start_dataset = subsample_dataset(
+        start_dataset, max_cells, sampling_method, sample_key, umap_seed, state_label=start_state
+    )
+    end_dataset = subsample_dataset(
+        end_dataset, max_cells, sampling_method, sample_key, umap_seed, state_label=end_state
+    )
     logger.info(f"Found {len(start_dataset)} {start_state} cells and {len(end_dataset)} {end_state} cells.")
 
     # 4. Perturb Dataset manually (currently only simulates deletion)
@@ -235,7 +364,6 @@ def main():
     # 7. UMAP Generation
     n_neighbors = cfg["umap"].get("n_neighbors", 15)
     min_dist = cfg["umap"].get("min_dist", 0.1)
-    umap_seed = cfg["umap"].get("seed", 42)
     
     try:
         import cuml
