@@ -261,21 +261,52 @@ def run_joint_overlays(
     axes[0, 0].set_xlabel("UMAP 1")
     axes[0, 0].set_ylabel("UMAP 2")
 
-    # Top-right: L2
+    # Top-right: L2 — zeros vs movers need strong contrast (≈half the cells are exactly 0)
+    from matplotlib.colors import PowerNorm
+
     axes[0, 1].scatter(end_xy[:, 0], end_xy[:, 1], s=3, c="lightgray", alpha=0.25, rasterized=True)
-    sc = axes[0, 1].scatter(
-        start_xy[:, 0],
-        start_xy[:, 1],
-        c=df["shift_l2"].values,
-        s=8,
-        cmap="viridis",
-        alpha=0.85,
-        rasterized=True,
-    )
-    plt.colorbar(sc, ax=axes[0, 1], label="shift_l2")
+    shift = np.asarray(df["shift_l2"].values, dtype=float)
+    zero = shift <= 0
+    if zero.any():
+        axes[0, 1].scatter(
+            start_xy[zero, 0],
+            start_xy[zero, 1],
+            s=6,
+            c="#cfcfcf",
+            alpha=0.55,
+            rasterized=True,
+            label="shift_l2 = 0",
+            zorder=2,
+            edgecolors="none",
+        )
+    sc = None
+    if (~zero).any():
+        movers = shift[~zero]
+        # Cap at p95 so extreme outliers don't compress the mid-range
+        vmax = float(np.percentile(movers, 95))
+        vmax = max(vmax, float(np.percentile(movers, 50)) + 1e-6)
+        # gamma < 1 stretches low/mid movers away from the pale end of the cmap
+        norm = PowerNorm(gamma=0.5, vmin=0.0, vmax=vmax)
+        sc = axes[0, 1].scatter(
+            start_xy[~zero, 0],
+            start_xy[~zero, 1],
+            c=movers,
+            s=12,
+            cmap="turbo",
+            norm=norm,
+            alpha=0.92,
+            rasterized=True,
+            zorder=3,
+            edgecolors="none",
+        )
+        cbar = plt.colorbar(sc, ax=axes[0, 1], label="shift_l2 (>0)")
+        if vmax < float(movers.max()):
+            cbar.ax.set_xlabel(f"vmax=p95 ({vmax:.2f})", fontsize=8)
     axes[0, 1].set_title(f"{start_state} on joint UMAP: colored by L2 shift")
     axes[0, 1].set_xlabel("UMAP 1")
     axes[0, 1].set_ylabel("UMAP 2")
+    if zero.any() and sc is not None:
+        axes[0, 1].legend(markerscale=1.5, frameon=False, fontsize=8, loc="upper right")
 
     # Bottom-left: cluster
     axes[1, 0].scatter(end_xy[:, 0], end_xy[:, 1], s=3, c="lightgray", alpha=0.2, rasterized=True)

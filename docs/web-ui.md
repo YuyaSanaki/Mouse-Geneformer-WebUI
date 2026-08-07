@@ -62,7 +62,9 @@ After a successful **Pipeline (E2E)** job, the **Outputs** section offers **Down
 | Pipeline (E2E) | [pipeline.md](pipeline.md) |
 | ISP UMAP | [isp_umap.md](isp_umap.md) |
 
-**Pipeline (E2E)** — set `perturbation.genes_to_perturb` in the Config YAML editor (mouse symbols e.g. `Actb`, `Gapdh`, or Ensembl IDs; empty `[]` = genome-wide ISP). See [pipeline.md § perturbation](pipeline.md#configure-coreconfigpipelineyaml).
+**Pipeline (E2E)** — use **Genes to perturb** under Run type (mouse symbols e.g. `Actb, Gapdh`, or Ensembl IDs; empty = genome-wide ISP). Writes `perturbation.genes_to_perturb`. See [pipeline.md § perturbation](pipeline.md#configure-coreconfigpipelineyaml).
+
+**ISP UMAP** — pick **Fill from Pipeline run** (or **Tokenized dataset** / **Fine-tuned model**), then **Gene to perturb**. Writes `paths.dataset`, `paths.geneformer_model`, and `perturbation.gene_to_perturb`. See [isp_umap.md](isp_umap.md).
 
 **GPU batch size** — `Auto` (default) writes `runtime.forward_batch_size: auto`, and ISP then measures this GPU at startup and picks the batch size; see [Automatic batch sizing](in-silico%20pertabation.md#9-automatic-batch-sizing). `Manual` writes the number you enter. Like the ISP state dropdowns, this control overwrites the corresponding YAML key when you run a job, so change it here rather than in the editor.
 

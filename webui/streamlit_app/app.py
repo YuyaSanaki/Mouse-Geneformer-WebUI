@@ -111,6 +111,10 @@ def _load_default_yaml() -> None:
         st.session_state["yaml_editor"] = f"# Missing file: {path}\n"
     if name == "Pipeline (E2E)":
         _sync_pipeline_form_from_yaml(_session_upload_dir())
+        _sync_genes_to_perturb_control(force=True)
+    elif name == "ISP UMAP":
+        _sync_isp_umap_path_controls(force=True)
+        _sync_isp_umap_gene_control(force=True)
 
 
 def _ensure_workspace() -> Path:
@@ -360,6 +364,247 @@ BATCH_MODE_MANUAL = "Manual"
 DEFAULT_MANUAL_BATCH_SIZE = 100
 
 
+def _parse_genes_text(raw: str | None) -> list[str]:
+    """Split comma / whitespace separated gene symbols or Ensembl IDs."""
+    if not raw:
+        return []
+    parts: list[str] = []
+    for chunk in str(raw).replace(",", " ").split():
+        gene = chunk.strip()
+        if gene:
+            parts.append(gene)
+    return parts
+
+
+def _format_genes_text(genes: list | None) -> str:
+    if not genes:
+        return ""
+    return ", ".join(str(g).strip() for g in genes if str(g).strip())
+
+
+def _sync_genes_to_perturb_control(*, force: bool = False) -> None:
+    """Initialize Pipeline genes_to_perturb text from YAML."""
+    if not force and "pipeline_genes_to_perturb" in st.session_state:
+        return
+    genes = _read_pipeline_perturbation().get("genes_to_perturb") or []
+    if not isinstance(genes, list):
+        genes = [genes] if genes else []
+    st.session_state["pipeline_genes_to_perturb"] = _format_genes_text(genes)
+
+
+def _selected_genes_to_perturb() -> list[str]:
+    return _parse_genes_text(st.session_state.get("pipeline_genes_to_perturb"))
+
+
+def _apply_genes_to_perturb_to_yaml() -> None:
+    _patch_pipeline_yaml(genes_to_perturb=_selected_genes_to_perturb())
+
+
+def _sync_isp_umap_gene_control(*, force: bool = False) -> None:
+    """Initialize ISP UMAP gene_to_perturb text from YAML."""
+    if not force and "isp_umap_gene_to_perturb" in st.session_state:
+        return
+    pert = _read_pipeline_yaml().get("perturbation") or {}
+    gene = pert.get("gene_to_perturb") or ""
+    st.session_state["isp_umap_gene_to_perturb"] = str(gene).strip()
+
+
+def _path_display(path: str | Path) -> str:
+    """Prefer repo-relative path for dropdown labels."""
+    p = Path(str(path))
+    try:
+        return str(p.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(p)
+
+
+def _resolve_user_path(raw: str | Path) -> Path:
+    p = Path(str(raw).strip())
+    if not p.is_absolute():
+        p = ROOT / p
+    return p
+
+
+def _looks_like_model_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if not (path / "config.json").is_file():
+        return False
+    return (
+        (path / "pytorch_model.bin").is_file()
+        or (path / "model.safetensors").is_file()
+        or any(path.glob("*.bin"))
+        or any(path.glob("*.safetensors"))
+    )
+
+
+def _discover_tokenized_datasets(limit: int = 40) -> list[Path]:
+    """Find *.dataset dirs under data/ and output/."""
+    found: list[Path] = []
+    seen: set[str] = set()
+    for root in (ROOT / "data", ROOT / "output"):
+        if not root.is_dir():
+            continue
+        try:
+            candidates = root.rglob("*.dataset")
+        except OSError:
+            continue
+        for p in candidates:
+            if not p.is_dir():
+                continue
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(p)
+    found.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    return found[:limit]
+
+
+def _discover_finetune_models(limit: int = 40) -> list[Path]:
+    """Find fine-tuned model dirs (config.json + weights) under output/."""
+    found: list[Path] = []
+    seen: set[str] = set()
+    out = ROOT / "output"
+    if not out.is_dir():
+        return []
+    patterns = (
+        "**/finetune/all_run*",
+        "**/finetune_*/all_run*",
+        "**/finetune/run*",
+    )
+    for pattern in patterns:
+        try:
+            matches = out.glob(pattern)
+        except OSError:
+            continue
+        for p in matches:
+            if not _looks_like_model_dir(p):
+                continue
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(p)
+    found.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    return found[:limit]
+
+
+def _pipeline_run_assets(run_dir: Path) -> tuple[Path | None, Path | None]:
+    """Return (dataset, model) for a pipeline_* folder when both exist."""
+    datasets = sorted(
+        (run_dir / "tokenized_dataset").glob("*.dataset"),
+        key=lambda p: p.stat().st_mtime if p.exists() else 0,
+        reverse=True,
+    )
+    dataset = next((p for p in datasets if p.is_dir()), None)
+    model = run_dir / "finetune" / "all_run1"
+    if not _looks_like_model_dir(model):
+        # Prefer any all_run* under finetune/
+        alts = sorted(
+            (run_dir / "finetune").glob("all_run*"),
+            key=lambda p: p.stat().st_mtime if p.exists() else 0,
+            reverse=True,
+        ) if (run_dir / "finetune").is_dir() else []
+        model_path = next((p for p in alts if _looks_like_model_dir(p)), None)
+    else:
+        model_path = model
+    return dataset, model_path
+
+
+def _discover_pipeline_umap_sources(limit: int = 20) -> list[tuple[str, Path, Path]]:
+    """Pipeline runs that already have tokenized dataset + fine-tuned model."""
+    rows: list[tuple[str, Path, Path]] = []
+    for run_dir in _latest_pipeline_run_dirs(ROOT / "output", limit=max(limit * 2, 30)):
+        dataset, model = _pipeline_run_assets(run_dir)
+        if dataset is None or model is None:
+            continue
+        label = f"{run_dir.parent.name}/{run_dir.name}"
+        rows.append((label, dataset, model))
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _patch_isp_umap_yaml(
+    *,
+    dataset: str | None = None,
+    geneformer_model: str | None = None,
+    gene_to_perturb: str | None = None,
+) -> None:
+    """Patch ISP UMAP YAML fields in the editor (before yaml_editor widget, or via on_change)."""
+    cfg = _read_pipeline_yaml()
+    if dataset is not None or geneformer_model is not None:
+        cfg.setdefault("paths", {})
+        if dataset is not None:
+            cfg["paths"]["dataset"] = dataset
+        if geneformer_model is not None:
+            cfg["paths"]["geneformer_model"] = geneformer_model
+    if gene_to_perturb is not None:
+        cfg.setdefault("perturbation", {})
+        cfg["perturbation"]["gene_to_perturb"] = gene_to_perturb
+    st.session_state["yaml_editor"] = yaml.dump(
+        cfg, default_flow_style=False, sort_keys=False, allow_unicode=True
+    )
+
+
+def _sync_isp_umap_path_controls(*, force: bool = False) -> None:
+    """Initialize ISP UMAP dataset/model text fields from YAML."""
+    paths = _read_pipeline_yaml().get("paths") or {}
+    if force or "isp_umap_dataset" not in st.session_state:
+        st.session_state["isp_umap_dataset"] = str(paths.get("dataset") or "").strip()
+    if force or "isp_umap_model" not in st.session_state:
+        st.session_state["isp_umap_model"] = str(paths.get("geneformer_model") or "").strip()
+    if force or "isp_umap_pipeline_pick" not in st.session_state:
+        st.session_state["isp_umap_pipeline_pick"] = "(manual paths)"
+
+
+def _apply_isp_umap_paths_to_yaml() -> None:
+    _patch_isp_umap_yaml(
+        dataset=str(st.session_state.get("isp_umap_dataset") or "").strip(),
+        geneformer_model=str(st.session_state.get("isp_umap_model") or "").strip(),
+    )
+
+
+def _apply_isp_umap_gene_to_yaml() -> None:
+    _patch_isp_umap_yaml(
+        gene_to_perturb=str(st.session_state.get("isp_umap_gene_to_perturb") or "").strip()
+    )
+
+
+def _on_isp_umap_pipeline_pick() -> None:
+    pick = st.session_state.get("isp_umap_pipeline_pick") or "(manual paths)"
+    if pick == "(manual paths)":
+        return
+    for label, dataset, model in _discover_pipeline_umap_sources():
+        if label == pick:
+            st.session_state["isp_umap_dataset"] = str(dataset)
+            st.session_state["isp_umap_model"] = str(model)
+            _patch_isp_umap_yaml(dataset=str(dataset), geneformer_model=str(model))
+            return
+
+
+def _on_isp_umap_dataset_pick() -> None:
+    pick = st.session_state.get("isp_umap_dataset_pick") or ""
+    if not pick or pick.startswith("("):
+        return
+    # Labels are display paths; resolve back to absolute under ROOT when relative.
+    path = str(_resolve_user_path(pick))
+    st.session_state["isp_umap_dataset"] = path
+    st.session_state["isp_umap_pipeline_pick"] = "(manual paths)"
+    _patch_isp_umap_yaml(dataset=path)
+
+
+def _on_isp_umap_model_pick() -> None:
+    pick = st.session_state.get("isp_umap_model_pick") or ""
+    if not pick or pick.startswith("("):
+        return
+    path = str(_resolve_user_path(pick))
+    st.session_state["isp_umap_model"] = path
+    st.session_state["isp_umap_pipeline_pick"] = "(manual paths)"
+    _patch_isp_umap_yaml(geneformer_model=path)
+
+
 def _sync_batch_size_controls() -> None:
     """Initialize the batch-size widgets from YAML; anything unparsable means Auto."""
     if "pipeline_batch_mode" in st.session_state:
@@ -547,6 +792,7 @@ def _apply_study_settings_to_yaml(upload_dir: Path) -> bool:
         input_dir=tokenize_dir,
         output_prefix=study_name,
         forward_batch_size=_selected_forward_batch_size(),
+        genes_to_perturb=_selected_genes_to_perturb(),
     )
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
     return True
@@ -614,6 +860,7 @@ def _build_patched_pipeline_yaml(
     isp_start_state: str | None = None,
     isp_end_state: str | None = None,
     forward_batch_size: int | str | None = None,
+    genes_to_perturb: list[str] | None = None,
 ) -> str:
     """Return patched pipeline YAML text without touching session_state widgets."""
     cfg = _read_pipeline_yaml()
@@ -622,13 +869,19 @@ def _build_patched_pipeline_yaml(
         cfg["data"]["input_dir"] = str(input_dir)
     if output_prefix != "__unset__":
         cfg["data"]["output_prefix"] = output_prefix
-    if isp_start_state is not None or isp_end_state is not None:
+    if (
+        isp_start_state is not None
+        or isp_end_state is not None
+        or genes_to_perturb is not None
+    ):
         cfg.setdefault("perturbation", {})
         if isp_start_state is not None:
             cfg["perturbation"]["start_state"] = isp_start_state
             cfg["perturbation"]["organ_data"] = isp_start_state
         if isp_end_state is not None:
             cfg["perturbation"]["end_state"] = isp_end_state
+        if genes_to_perturb is not None:
+            cfg["perturbation"]["genes_to_perturb"] = list(genes_to_perturb)
     if forward_batch_size is not None:
         cfg.setdefault("runtime", {})
         cfg["runtime"]["forward_batch_size"] = forward_batch_size
@@ -642,6 +895,7 @@ def _patch_pipeline_yaml(
     isp_start_state: str | None = None,
     isp_end_state: str | None = None,
     forward_batch_size: int | str | None = None,
+    genes_to_perturb: list[str] | None = None,
 ) -> bool:
     """Patch pipeline YAML fields in the editor (must run before yaml_editor widget, or via button+rerun)."""
     dumped = _build_patched_pipeline_yaml(
@@ -650,6 +904,7 @@ def _patch_pipeline_yaml(
         isp_start_state=isp_start_state,
         isp_end_state=isp_end_state,
         forward_batch_size=forward_batch_size,
+        genes_to_perturb=genes_to_perturb,
     )
     st.session_state["yaml_editor"] = dumped
     if input_dir is not None:
@@ -724,6 +979,7 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
         isp_start_state=start_state,
         isp_end_state=end_state,
         forward_batch_size=_selected_forward_batch_size(),
+        genes_to_perturb=_selected_genes_to_perturb(),
     )
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
     return yaml_text, None
@@ -991,6 +1247,24 @@ def main() -> None:
                     "Pick different values (e.g. WT → AD). **Run job** is disabled."
                 )
 
+            _sync_genes_to_perturb_control()
+            st.text_input(
+                "Genes to perturb",
+                key="pipeline_genes_to_perturb",
+                on_change=_apply_genes_to_perturb_to_yaml,
+                placeholder="e.g. Actb, Gapdh (empty = genome-wide)",
+                help=(
+                    "Mouse gene symbols or Ensembl IDs, comma- or space-separated. "
+                    "Writes `perturbation.genes_to_perturb`. Leave empty for genome-wide ISP "
+                    "(very slow)."
+                ),
+            )
+            genes_sel = _selected_genes_to_perturb()
+            if genes_sel:
+                st.caption(f"Targeted ISP: `{', '.join(genes_sel)}`")
+            else:
+                st.caption("Empty → genome-wide ISP (all genes).")
+
             _sync_batch_size_controls()
             c_mode, c_size = st.columns(2)
             with c_mode:
@@ -1034,6 +1308,120 @@ def main() -> None:
                     st.success(text)
                 else:
                     st.warning(text)
+        elif st.session_state.get("run_type_sel") == "ISP UMAP":
+            st.info(
+                "Visualizes per-cell embedding shift for **one** perturbed gene on UMAP. "
+                "Pick a tokenized dataset + fine-tuned model (or a Pipeline run that has both)."
+            )
+            _sync_isp_umap_path_controls()
+            _sync_isp_umap_gene_control()
+
+            pipeline_sources = _discover_pipeline_umap_sources()
+            pipe_labels = ["(manual paths)"] + [label for label, _, _ in pipeline_sources]
+            if st.session_state.get("isp_umap_pipeline_pick") not in pipe_labels:
+                st.session_state["isp_umap_pipeline_pick"] = "(manual paths)"
+            st.selectbox(
+                "Fill from Pipeline run",
+                pipe_labels,
+                key="isp_umap_pipeline_pick",
+                on_change=_on_isp_umap_pipeline_pick,
+                help=(
+                    "Uses `tokenized_dataset/*.dataset` and `finetune/all_run1` from a completed "
+                    "Pipeline (E2E) folder under `output/`."
+                ),
+            )
+            if not pipeline_sources:
+                st.caption(
+                    "No complete Pipeline runs found under `output/` yet "
+                    "(need both tokenized `.dataset` and `finetune/all_run1`)."
+                )
+
+            datasets = _discover_tokenized_datasets()
+            ds_labels = ["(type / paste path below)"] + [_path_display(p) for p in datasets]
+            cur_ds = str(st.session_state.get("isp_umap_dataset") or "").strip()
+            if cur_ds:
+                cur_label = _path_display(cur_ds)
+                if cur_label not in ds_labels:
+                    ds_labels.insert(1, cur_label)
+            if st.session_state.get("isp_umap_dataset_pick") not in ds_labels:
+                st.session_state["isp_umap_dataset_pick"] = (
+                    _path_display(cur_ds) if cur_ds and _path_display(cur_ds) in ds_labels
+                    else "(type / paste path below)"
+                )
+            st.selectbox(
+                "Tokenized dataset",
+                ds_labels,
+                key="isp_umap_dataset_pick",
+                on_change=_on_isp_umap_dataset_pick,
+                help="HuggingFace `.dataset` directory (`paths.dataset`).",
+            )
+            st.text_input(
+                "Dataset path",
+                key="isp_umap_dataset",
+                on_change=_apply_isp_umap_paths_to_yaml,
+                placeholder="/app/data/.../Study_0.dataset",
+            )
+            ds_path = str(st.session_state.get("isp_umap_dataset") or "").strip()
+            if ds_path:
+                exists = _resolve_user_path(ds_path).is_dir()
+                st.caption(
+                    f"Dataset: `{ds_path}` — "
+                    + ("found" if exists else "path not found on disk")
+                )
+            else:
+                st.warning("Select or paste a tokenized `.dataset` path.")
+
+            models = _discover_finetune_models()
+            model_labels = ["(type / paste path below)"] + [_path_display(p) for p in models]
+            cur_model = str(st.session_state.get("isp_umap_model") or "").strip()
+            if cur_model:
+                cur_label = _path_display(cur_model)
+                if cur_label not in model_labels:
+                    model_labels.insert(1, cur_label)
+            if st.session_state.get("isp_umap_model_pick") not in model_labels:
+                st.session_state["isp_umap_model_pick"] = (
+                    _path_display(cur_model)
+                    if cur_model and _path_display(cur_model) in model_labels
+                    else "(type / paste path below)"
+                )
+            st.selectbox(
+                "Fine-tuned model",
+                model_labels,
+                key="isp_umap_model_pick",
+                on_change=_on_isp_umap_model_pick,
+                help="Sequence-classification checkpoint (`paths.geneformer_model`).",
+            )
+            st.text_input(
+                "Model path",
+                key="isp_umap_model",
+                on_change=_apply_isp_umap_paths_to_yaml,
+                placeholder="/app/output/.../finetune/all_run1",
+            )
+            model_path = str(st.session_state.get("isp_umap_model") or "").strip()
+            if model_path:
+                model_ok = _looks_like_model_dir(_resolve_user_path(model_path))
+                st.caption(
+                    f"Model: `{model_path}` — "
+                    + ("found" if model_ok else "missing config.json / weights")
+                )
+            else:
+                st.warning("Select or paste a fine-tuned model path.")
+
+            st.text_input(
+                "Gene to perturb",
+                key="isp_umap_gene_to_perturb",
+                on_change=_apply_isp_umap_gene_to_yaml,
+                placeholder="e.g. Actb",
+                help=(
+                    "Mouse gene symbol or Ensembl ID. "
+                    "Writes `perturbation.gene_to_perturb`."
+                ),
+            )
+            gene_umap = str(st.session_state.get("isp_umap_gene_to_perturb") or "").strip()
+            if gene_umap:
+                st.caption(f"ISP UMAP gene: `{gene_umap}`")
+            else:
+                st.warning("Enter a gene symbol or Ensembl ID before running.")
 
     with c3:
         st.subheader("Run directory")
@@ -1103,6 +1491,50 @@ def main() -> None:
                 prep_failed = True
             else:
                 yaml_text = prepared or yaml_text
+        elif run_label == "ISP UMAP":
+            gene = str(st.session_state.get("isp_umap_gene_to_perturb") or "").strip()
+            dataset = str(st.session_state.get("isp_umap_dataset") or "").strip()
+            model = str(st.session_state.get("isp_umap_model") or "").strip()
+            if not dataset:
+                st.error("Set **Dataset path** (tokenized `.dataset`) before running ISP UMAP.")
+                prep_failed = True
+            elif not model:
+                st.error("Set **Model path** (fine-tuned checkpoint) before running ISP UMAP.")
+                prep_failed = True
+            elif not gene:
+                st.error("Set **Gene to perturb** (symbol or Ensembl ID) before running ISP UMAP.")
+                prep_failed = True
+            else:
+                ds_resolved = _resolve_user_path(dataset)
+                model_resolved = _resolve_user_path(model)
+                if not ds_resolved.is_dir():
+                    st.error(f"Dataset path not found: `{ds_resolved}`")
+                    prep_failed = True
+                elif not _looks_like_model_dir(model_resolved):
+                    st.error(
+                        f"Model path is not a fine-tuned checkpoint "
+                        f"(need `config.json` + weights): `{model_resolved}`"
+                    )
+                    prep_failed = True
+                else:
+                    try:
+                        cfg_tmp = yaml.safe_load(yaml_text) or {}
+                    except yaml.YAMLError as e:
+                        st.error(f"Invalid YAML: {e}")
+                        prep_failed = True
+                        cfg_tmp = None
+                    if cfg_tmp is not None:
+                        cfg_tmp.setdefault("paths", {})
+                        cfg_tmp["paths"]["dataset"] = str(ds_resolved)
+                        cfg_tmp["paths"]["geneformer_model"] = str(model_resolved)
+                        cfg_tmp.setdefault("perturbation", {})
+                        cfg_tmp["perturbation"]["gene_to_perturb"] = gene
+                        yaml_text = yaml.dump(
+                            cfg_tmp,
+                            default_flow_style=False,
+                            sort_keys=False,
+                            allow_unicode=True,
+                        )
 
         if not prep_failed:
             try:
