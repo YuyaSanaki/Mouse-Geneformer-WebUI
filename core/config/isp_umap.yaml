@@ -49,3 +49,14 @@ runtime:
   num_classes: 2
   # Batch size for dataset mapping processes
   batch_size: 100
+
+# After the main UMAP + per_cell_isp_shift.csv, also write cluster_coexpr_analysis/:
+#   umap_joint_l2_cluster_celltype.png, l2_by_coarse_celltype.png,
+#   l2_mean_by_coarse_celltype.png, per_cell_cluster_l2_celltype.csv
+# Set enabled: false (or postprocess: false) to skip.
+postprocess:
+  enabled: true
+  # KMeans clusters when annotation CSV has no cluster labels (joint overlays)
+  n_clusters: 4
+  # Marker-gene cell-type prediction on start-state cells (writes pred_cell_type / coarse_type)
+  celltype_prediction: true

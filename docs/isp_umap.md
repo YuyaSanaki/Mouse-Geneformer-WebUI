@@ -36,6 +36,36 @@ The `gene_to_perturb` parameter supports gene symbols (e.g. `Actb`, `Gapdh`) and
 docker compose run --rm isp_umap
 ```
 
+### Downstream plots (automatic)
+
+After the main UMAP finishes, `run_isp_umap.py` runs (unless `postprocess.enabled: false` in [`isp_umap.yaml`](../core/config/isp_umap.yaml)):
+
+1. **Cell-type prediction** — marker-gene scores on each start-state cell’s `input_ids` → `pred_cell_type`, `coarse_type`, and `score_*` columns in `per_cell_isp_shift.csv` (`postprocess.celltype_prediction`, default true).
+2. **Joint UMAP overlays** — `cluster_coexpr_analysis/umap_joint_l2_cluster_celltype.png` (+ `per_cell_cluster_l2_celltype.csv`, `joint_umap_coords.npy`). Bottom-right panel uses `coarse_type` / `pred_cell_type` (not `sample_id`).
+3. **L2 by group** — `l2_by_coarse_celltype.png` and `l2_mean_by_coarse_celltype.png`. Groups by `coarse_type` when present; otherwise `pred_cell_type` / `cluster`.
+
+Re-annotate an existing run (then refresh plots):
+
+```bash
+docker compose run --rm --no-deps webui \
+  python3 /app/scripts/annotate_isp_umap_celltypes.py \
+  --run-dir output/20260807/isp_umap_074258 \
+  --config /app/core/config/isp_umap.yaml \
+  --refresh-overlays
+```
+
+Manual plot-only re-run:
+
+```bash
+docker compose run --rm --no-deps webui \
+  python3 /app/scripts/plot_isp_umap_joint_overlays.py \
+  --run-dir output/20260807/isp_umap_074258 \
+  --gene Igfbp2
+
+docker compose run --rm --no-deps webui \
+  python3 /app/scripts/plot_l2_by_coarse_celltype.py \
+  --run-dir output/20260807/isp_umap_074258
+```
 ## Outputs
 
 All generated assets are safely routed to the `output/[DATE]/isp_umap_[UTC TIME]` directory.
@@ -45,6 +75,9 @@ All generated assets are safely routed to the `output/[DATE]/isp_umap_[UTC TIME]
 | **`per_cell_isp_shift.csv`** | **Essential:** per-cell perturbation magnitude and direction (see below) |
 | `umap_*.png` | Visual summary; grey arrows = same cells as `umap_shift_l2` in the CSV |
 | `*_embs.npy` | Raw embedding matrices for custom downstream analysis |
+| `cluster_coexpr_analysis/umap_joint_l2_cluster_celltype.png` | Joint UMAP colored by L2 / cluster / cell type (auto) |
+| `cluster_coexpr_analysis/l2_by_coarse_celltype.png` | L2 and toward-end boxplots by group (auto) |
+| `cluster_coexpr_analysis/l2_mean_by_coarse_celltype.png` | Mean L2 ± SEM by group (auto) |
 
 ### 1. UMAP Figure (`umap_*.png`)
 A visually distinct seaborn scatterplot comparing:

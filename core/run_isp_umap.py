@@ -1,6 +1,8 @@
 import os
 import argparse
 import math
+import subprocess
+import sys
 import yaml
 import torch
 import numpy as np
@@ -14,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from datasets import load_from_disk
 from transformers import AutoModelForSequenceClassification
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -218,6 +222,62 @@ def build_per_cell_shift_table(
 
     return pd.DataFrame(meta)
 
+
+def run_downstream_plots(run_dir: Path, gene: str, cfg: dict) -> None:
+    """Generate joint overlays + L2-by-group figures under cluster_coexpr_analysis/.
+
+    Joint overlays builds (or refreshes) per_cell_cluster_l2_celltype.csv with
+    KMeans ``cluster`` when cell-type labels are absent; the L2 script then plots
+    box/mean figures grouped by coarse_type / pred_cell_type / cluster.
+    """
+    post = cfg.get("postprocess", {})
+    if post is False:
+        logger.info("postprocess disabled (postprocess: false); skipping downstream plots")
+        return
+    if isinstance(post, dict) and not post.get("enabled", True):
+        logger.info("postprocess.enabled is false; skipping downstream plots")
+        return
+    post = post if isinstance(post, dict) else {}
+    umap_cfg = cfg.get("umap", {})
+
+    joint_script = _SCRIPTS_DIR / "plot_isp_umap_joint_overlays.py"
+    l2_script = _SCRIPTS_DIR / "plot_l2_by_coarse_celltype.py"
+    joint_cmd = [
+        sys.executable,
+        str(joint_script),
+        "--run-dir",
+        str(run_dir),
+        "--gene",
+        str(gene),
+        "--n-neighbors",
+        str(umap_cfg.get("n_neighbors", 15)),
+        "--min-dist",
+        str(umap_cfg.get("min_dist", 0.1)),
+        "--seed",
+        str(umap_cfg.get("seed", 42)),
+        "--num-trajectory-arrows",
+        str(umap_cfg.get("num_trajectory_arrows", 100)),
+        "--n-clusters",
+        str(post.get("n_clusters", umap_cfg.get("n_clusters", 4))),
+    ]
+    steps = [
+        ("joint UMAP overlays", joint_cmd),
+        (
+            "L2 by coarse cell type",
+            [sys.executable, str(l2_script), "--run-dir", str(run_dir)],
+        ),
+    ]
+    for label, cmd in steps:
+        if not Path(cmd[1]).exists():
+            logger.warning("Post-process script missing (%s); skipping %s", cmd[1], label)
+            continue
+        logger.info("Post-process: %s ...", label)
+        try:
+            subprocess.run(cmd, check=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            logger.warning("Post-process %s failed (core UMAP outputs are intact): %s", label, exc)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ISP UMAP Plotter")
     _core = Path(__file__).resolve().parent
@@ -388,6 +448,27 @@ def main():
         umap_coords=umap_embs,
         start_umap_offset=len(end_embs),
     )
+
+    # Marker-gene cell-type labels for overlays / L2-by-group plots
+    post_cfg = cfg.get("postprocess", {})
+    predict_ct = True
+    if post_cfg is False:
+        predict_ct = False
+    elif isinstance(post_cfg, dict):
+        predict_ct = post_cfg.get("celltype_prediction", True)
+    if predict_ct:
+        try:
+            from isp_umap_celltype import annotate_dataframe_with_cell_types
+
+            logger.info("Predicting cell types from marker genes in start-state input_ids...")
+            per_cell_df = annotate_dataframe_with_cell_types(
+                per_cell_df, start_dataset["input_ids"]
+            )
+        except Exception:
+            logger.exception(
+                "Cell-type prediction failed; continuing without pred_cell_type/coarse_type"
+            )
+
     per_cell_path = out_dir / "per_cell_isp_shift.csv"
     per_cell_df.to_csv(per_cell_path, index=False)
     logger.info(
@@ -424,6 +505,8 @@ def main():
     out_file = out_dir / f"umap_{start_state}_vs_{end_state}_isp_{raw_gene}.png"
     plt.savefig(out_file, bbox_inches="tight")
     logger.info(f"Saved UMAP plot to {out_file}")
+
+    run_downstream_plots(out_dir, raw_gene, cfg)
     logger.info("ISP UMAP pipeline finished successfully.")
 
 if __name__ == "__main__":
