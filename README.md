@@ -1,5 +1,11 @@
 # Mouse Geneformer WebUI
 
+## Premise
+
+**Mouse Geneformer WebUI has moved to ISP Platform.** Please use the new repository:
+
+https://github.com/YuyaSanaki/ISP-Platform
+
 This is a refactored clone of [mouse-Geneformer](https://github.com/machine-perception-robotics-group/Mouse-Geneformer). It runs on an NVIDIA GPU workstation or server with Docker. All services use Docker Compose (the upstream repo used Jupyter). You can run jobs from the **Web UI** or the **CLI**.
 
 **Monorepo:** `core/` (Geneformer + CLI), `webui/` (Streamlit), `contracts/` (shared input layout). WebUI talks to core only via **subprocess + YAML**. Layout and contract: [docs/architecture.md](docs/architecture.md). This GitHub repo is the public surface of that monorepo, not a separate diverging codebase.
